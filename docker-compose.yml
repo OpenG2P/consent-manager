@@ -1,0 +1,43 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: consent_manager_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      CONSENT_MANAGER_DB_HOSTNAME: db
+      CONSENT_MANAGER_DB_PORT: "5432"
+      CONSENT_MANAGER_DB_USERNAME: postgres
+      CONSENT_MANAGER_DB_PASSWORD: postgres
+      CONSENT_MANAGER_DB_DBNAME: consent_manager_db
+      CONSENT_MANAGER_CONTROLLER_ID: openg2p.registry
+      # Provide a persistent signing key in real deployments (see backend/.env.example).
+      CONSENT_MANAGER_NO_OF_WORKERS: "4"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:

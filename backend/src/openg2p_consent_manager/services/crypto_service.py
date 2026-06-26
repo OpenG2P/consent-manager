@@ -1,0 +1,128 @@
+import logging
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa
+from cryptography.hazmat.primitives.asymmetric.ec import ECDSA
+from openg2p_fastapi_common.service import BaseService
+
+from ..config import Settings
+from ..utils.canonical import b64url_decode, b64url_encode
+
+_config = Settings.get_config()
+_logger = logging.getLogger(_config.logging_default_logger_name)
+
+ALG_EDDSA = "EdDSA"
+ALG_ES256 = "ES256"
+ALG_RS256 = "RS256"
+
+
+class CryptoService(BaseService):
+    """Signs CM consent receipts and verifies partner-signed consent objects.
+
+    Asymmetric only — the CM's private key signs receipts; partner public keys
+    verify consent objects. The CM's public key is published via JWKS so any
+    party can verify a receipt without being able to forge one.
+    """
+
+    def __init__(self, name="", **kwargs):
+        super().__init__(name, **kwargs)
+        self._private_key = self._load_signing_key()
+        self.kid = _config.cm_signing_kid
+        self.algorithm = _config.cm_signing_algorithm
+
+    # ── CM signing key ───────────────────────────────────────────────────────
+
+    def _load_signing_key(self):
+        pem = _config.cm_signing_private_key_pem.strip()
+        if pem:
+            return serialization.load_pem_private_key(pem.encode("utf-8"), password=None)
+        _logger.warning(
+            "consent_manager_cm_signing_private_key_pem not set — generating an "
+            "EPHEMERAL Ed25519 key. Receipts will not verify across restarts or "
+            "pods. Configure a persistent key for production."
+        )
+        return ed25519.Ed25519PrivateKey.generate()
+
+    def sign(self, message: bytes) -> str:
+        """Sign bytes with the CM private key; return base64url signature."""
+        key = self._private_key
+        if isinstance(key, ed25519.Ed25519PrivateKey):
+            sig = key.sign(message)
+        elif isinstance(key, ec.EllipticCurvePrivateKey):
+            sig = key.sign(message, ECDSA(hashes.SHA256()))
+        elif isinstance(key, rsa.RSAPrivateKey):
+            sig = key.sign(message, padding.PKCS1v15(), hashes.SHA256())
+        else:
+            raise ValueError(f"Unsupported CM signing key type: {type(key)}")
+        return b64url_encode(sig)
+
+    def public_jwks(self) -> dict:
+        """Publish the CM public key as a JWKS document."""
+        pub = self._private_key.public_key()
+        if isinstance(pub, ed25519.Ed25519PublicKey):
+            raw = pub.public_bytes(
+                serialization.Encoding.Raw, serialization.PublicFormat.Raw
+            )
+            jwk = {
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "x": b64url_encode(raw),
+                "use": "sig",
+                "alg": "EdDSA",
+                "kid": self.kid,
+            }
+        elif isinstance(pub, ec.EllipticCurvePublicKey):
+            numbers = pub.public_numbers()
+            size = (pub.curve.key_size + 7) // 8
+            jwk = {
+                "kty": "EC",
+                "crv": "P-256",
+                "x": b64url_encode(numbers.x.to_bytes(size, "big")),
+                "y": b64url_encode(numbers.y.to_bytes(size, "big")),
+                "use": "sig",
+                "alg": "ES256",
+                "kid": self.kid,
+            }
+        elif isinstance(pub, rsa.RSAPublicKey):
+            numbers = pub.public_numbers()
+            jwk = {
+                "kty": "RSA",
+                "n": b64url_encode(
+                    numbers.n.to_bytes((numbers.n.bit_length() + 7) // 8, "big")
+                ),
+                "e": b64url_encode(
+                    numbers.e.to_bytes((numbers.e.bit_length() + 7) // 8, "big")
+                ),
+                "use": "sig",
+                "alg": "RS256",
+                "kid": self.kid,
+            }
+        else:
+            raise ValueError("Unsupported CM public key type")
+        return {"keys": [jwk]}
+
+    # ── Partner signature verification ───────────────────────────────────────
+
+    def verify(
+        self, public_key_pem: str, algorithm: str, message: bytes, signature_b64url: str
+    ) -> bool:
+        """Verify a partner signature over canonical message bytes."""
+        try:
+            pub = serialization.load_pem_public_key(public_key_pem.encode("utf-8"))
+            sig = b64url_decode(signature_b64url)
+            if algorithm == ALG_EDDSA:
+                pub.verify(sig, message)
+            elif algorithm == ALG_ES256:
+                pub.verify(sig, message, ECDSA(hashes.SHA256()))
+            elif algorithm == ALG_RS256:
+                pub.verify(sig, message, padding.PKCS1v15(), hashes.SHA256())
+            else:
+                _logger.warning("Unsupported signature algorithm: %s", algorithm)
+                return False
+            return True
+        except InvalidSignature:
+            return False
+        except Exception as exc:  # malformed key/signature
+            _logger.warning("Signature verification error: %s", exc)
+            return False

@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "openg2p-consent-manager"
+authors = [
+  { name = "OpenG2P", email = "info@openg2p.org" },
+]
+description = "OpenG2P Consent Manager — verifies partner-signed consent objects and governs outbound data sharing."
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
+  "Operating System :: OS Independent",
+]
+dependencies = [
+  "openg2p-fastapi-common >=1.1.4",
+  "asyncpg",
+  "psycopg2",
+  "cryptography >=42.0.0",
+  "pyjwt >=2.8.0",
+]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://openg2p.org"
+Documentation = "https://docs.openg2p.org/"
+Repository = "https://github.com/OpenG2P/consent-manager"
+
+[tool.hatch.version]
+path = "src/openg2p_consent_manager/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/openg2p_consent_manager"]
