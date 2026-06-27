@@ -33,11 +33,15 @@ class Settings(BaseSettings):
     # Postgres max_connections ≳ (pods × workers × pool_size + headroom).
 
     # ── Signing / trust ─────────────────────────────────────────────────────
-    # CM receipt signing key (PEM). Provide via env/secret in production.
-    # If unset, a process-local ephemeral key is generated (dev only).
+    # CM receipt signing key. Preferred source is a PKCS#12 (.p12) keystore
+    # holding the private key (+ certificate). Falls back to a PEM string, then
+    # to a process-local ephemeral key (dev only). The signing algorithm is
+    # auto-detected from the loaded key type (Ed25519→EdDSA, EC→ES256, RSA→RS256).
+    cm_signing_p12_path: str = ""
+    cm_signing_p12_password: str = ""
     cm_signing_private_key_pem: str = ""
     cm_signing_kid: str = "cm-2025-01"
-    cm_signing_algorithm: str = "EdDSA"  # EdDSA (ed25519) | ES256 | RS256
+    cm_signing_algorithm: str = "EdDSA"  # fallback hint only; key type wins
 
     # Identifier of this data controller / registry tenant. Consent objects must
     # carry this value as their data_controller for the audience check to pass.
@@ -60,3 +64,17 @@ class Settings(BaseSettings):
     # Cached in-process per pod; staleness bounded by the TTL.
     partner_cache_ttl_sec: int = 60
     partner_cache_enabled: bool = True
+
+    # ── Caller authentication (Keycloak / OIDC bearer) ──────────────────────
+    # Validates bearer tokens on protected endpoints against the Keycloak JWKS,
+    # exactly like the AWE service. When auth_enabled is false (dev), tokens are
+    # accepted without verification and role checks pass.
+    auth_enabled: bool = True
+    auth_issuer: str = ""  # e.g. https://keycloak.../realms/staff
+    auth_jwks_url: str = ""  # usually issuer + /protocol/openid-connect/certs
+    auth_audience: str = ""  # optional; empty disables the audience check
+    auth_algorithms: list[str] = ["RS256", "ES256", "EdDSA"]
+    # Role (realm- or client-scoped) required for partner/policy admin endpoints.
+    auth_admin_role: str = "CONSENT_MANAGER_ADMIN"
+    # Default subject id-type when a token omits the subject_id_type claim.
+    subject_default_id_type: str = "national_id"

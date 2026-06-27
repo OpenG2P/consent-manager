@@ -1,9 +1,11 @@
 import logging
 from datetime import datetime, timezone
 
+from fastapi import Depends
 from fastapi.responses import JSONResponse
 from openg2p_fastapi_common.controller import BaseController
 
+from ..auth import current_identity
 from ..config import Settings
 from ..schemas.lifecycle import (
     ApproveRequest,
@@ -42,28 +44,30 @@ class LifecycleController(BaseController):
         self.router.prefix += "/consent/v1"
         self.router.tags += ["Consent Lifecycle"]
 
+        # Origination is driven by authenticated staff/service callers.
+        auth = [Depends(current_identity)]
         self.router.add_api_route(
-            "/consent-requests", self.create_request,
+            "/consent-requests", self.create_request, dependencies=auth,
             responses={201: {"model": ConsentRequestResponse}}, methods=["POST"], status_code=201,
         )
         self.router.add_api_route(
-            "/consent-requests/{request_id}", self.get_request,
+            "/consent-requests/{request_id}", self.get_request, dependencies=auth,
             responses={200: {"model": ConsentRequestResponse}}, methods=["GET"],
         )
         self.router.add_api_route(
-            "/consent-requests/{request_id}/authenticate", self.authenticate,
+            "/consent-requests/{request_id}/authenticate", self.authenticate, dependencies=auth,
             responses={200: {"model": AuthenticateResponse}}, methods=["POST"],
         )
         self.router.add_api_route(
-            "/consent-requests/{request_id}/approve", self.approve,
+            "/consent-requests/{request_id}/approve", self.approve, dependencies=auth,
             responses={201: {"model": ArtefactResponse}}, methods=["POST"], status_code=201,
         )
         self.router.add_api_route(
-            "/consent-requests/{request_id}/deny", self.deny,
+            "/consent-requests/{request_id}/deny", self.deny, dependencies=auth,
             responses={200: {"model": ConsentRequestResponse}}, methods=["POST"],
         )
         self.router.add_api_route(
-            "/consents/{consent_id}/revoke", self.revoke,
+            "/consents/{consent_id}/revoke", self.revoke, dependencies=auth,
             responses={200: {"model": RevokeResponse}}, methods=["POST"],
         )
 

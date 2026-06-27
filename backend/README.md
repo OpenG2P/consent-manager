@@ -50,6 +50,23 @@ uvicorn openg2p_consent_manager.main:app --reload
 
 Or via Docker Compose from the repo root: `docker compose up --build`.
 
+## Authentication &amp; signing
+
+* **Caller auth** — protected endpoints require a **Keycloak** bearer token (validated against the
+  realm JWKS), mirroring the OpenG2P AWE service. Admin endpoints require the
+  `CONSENT_MANAGER_ADMIN` role; `/validate` accepts a service-account token; `/my/*` is scoped to
+  the subject. Set `CONSENT_MANAGER_AUTH_ENABLED=false` for local dev (tokens accepted unverified).
+* **Receipt signing** — the CM private key is loaded from a **PKCS#12 (`.p12`)** keystore
+  (`CONSENT_MANAGER_CM_SIGNING_P12_PATH` + `_PASSWORD`); algorithm is auto-detected from the key
+  type. Falls back to a PEM string, then an ephemeral dev key.
+
+## Deployment
+
+* **Docker** — `docker/consent-manager-api/Dockerfile` (build context = repo root).
+* **Helm** — `deployment/charts/openg2p-consent-manager/` (common + postgres-init deps, HPA,
+  probes, istio VirtualService, `.p12` Secret mount, and an expiry CronJob). Mirrors g2p-bridge.
+* **CI** — `.github/workflows/` builds the image and publishes the chart.
+
 ## Horizontal scalability
 
 * **Stateless** — no per-pod state; any replica serves any request. Scale by adding

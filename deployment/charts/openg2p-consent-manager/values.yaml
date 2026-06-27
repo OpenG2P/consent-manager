@@ -1,0 +1,197 @@
+global:
+  namespace: "" # empty => auto-pick install namespace (.Release.Namespace)
+
+  # ── Database (shared commons Postgres) ──────────────────────────────────
+  postgresqlHost: commons-postgresql
+  consentDB: '{{ printf "%s" .Release.Name | replace "-" "_" }}'
+  consentDBPort: 5432
+  consentDBUser: '{{ printf "%s_user" .Release.Name | replace "-" "_" }}'
+  consentDBSecret: '{{ .Release.Name }}-db'
+  consentDBUserPasswordKey: '{{ .Release.Name }}-db-user'
+
+  # ── Hostname / routing ──────────────────────────────────────────────────
+  consentManagerHostname: 'consent-manager.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
+
+  # ── Keycloak (caller auth) ──────────────────────────────────────────────
+  keycloakBaseUrl: 'https://keycloak.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
+  keycloakRealm: staff
+  keycloakIssuerUrl: '{{ tpl .Values.global.keycloakBaseUrl $ }}/realms/{{ tpl .Values.global.keycloakRealm $ }}'
+  consentManagerAuthEnabled: true
+  consentManagerAdminRole: CONSENT_MANAGER_ADMIN
+
+  # ── This data controller / registry tenant ──────────────────────────────
+  consentControllerId: openg2p.registry
+
+  # ── CM receipt signing key (PKCS#12) ────────────────────────────────────
+  # Mount a .p12 from a Secret; see consentManagerApi.signingKey below.
+  consentSigningKid: cm-2025-01
+
+postgres-init:
+  enabled: true
+  postgresql:
+    host: '{{ .Values.global.postgresqlHost }}'
+    port: 5432
+    existingSecret: commons-postgresql
+    existingSecretPostgresPasswordKey: postgres-password
+  databases:
+    - name: '{{ tpl .Values.global.consentDB $ }}'
+      user: '{{ tpl .Values.global.consentDBUser $ }}'
+      secret: '{{ tpl .Values.global.consentDBSecret $ }}'
+      secretUserPasswordKey: '{{ tpl .Values.global.consentDBUserPasswordKey $ }}'
+
+keycloak-init:
+  enabled: false
+
+consentManagerApi:
+  enabled: true
+  nameOverride: api
+  hostname: '{{ tpl .Values.global.consentManagerHostname $ }}'
+  replicaCount: 1
+
+  # Horizontal scaling — stateless pods; turn this on in production.
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+
+  updateStrategy:
+    type: RollingUpdate
+
+  serviceAccount:
+    create: false
+    name: ""
+
+  image:
+    repository: openg2p/openg2p-consent-manager
+    # Image tag — defaults to the develop stream. Override per release/deploy
+    # (e.g. --set consentManagerApi.image.tag=1.2.0).
+    tag: "develop"
+    pullPolicy: Always
+
+  podSecurityContext:
+    enabled: false
+    fsGroup: 1001
+  containerSecurityContext:
+    enabled: false
+    runAsUser: 1001
+    runAsNonRoot: true
+
+  openapiRootPath: /api/consent-manager
+  containerPort: 8000
+
+  service:
+    type: ClusterIP
+    port: 80
+    externalTrafficPolicy: Cluster
+
+  istio:
+    enabled: true
+    virtualservice:
+      enabled: true
+      host: '{{ tpl .Values.consentManagerApi.hostname $ }}'
+      gateway: "internal"
+      destination: '{{ .Release.Name }}-api'
+      destinationPort: 80
+      prefix: '{{ .Values.consentManagerApi.openapiRootPath }}/'
+      rewriteUri: "/"
+    gateway:
+      enabled: false
+
+  # ── CM signing key (.p12) mounted from a Secret ─────────────────────────
+  signingKey:
+    enabled: false
+    # Name of an existing Secret containing the .p12 under key `cm_signing.p12`.
+    secretName: consent-manager-signing
+    secretKey: cm_signing.p12
+    mountPath: /app/secrets
+    # Name of a Secret holding the .p12 password under key `password`.
+    passwordSecretName: consent-manager-signing
+    passwordSecretKey: password
+
+  # ── Periodic expiry sweep (CronJob) ─────────────────────────────────────
+  # Keeps API pods stateless — expiry runs once per tick regardless of replicas.
+  expiryCronjob:
+    enabled: true
+    schedule: "*/15 * * * *"
+    backoffLimit: 1
+
+  envVars:
+    CONSENT_MANAGER_DB_HOSTNAME: '{{ .Values.global.postgresqlHost }}'
+    CONSENT_MANAGER_DB_DBNAME: '{{ tpl .Values.global.consentDB $ }}'
+    CONSENT_MANAGER_DB_PORT: '{{ .Values.global.consentDBPort }}'
+    CONSENT_MANAGER_DB_USERNAME: '{{ tpl .Values.global.consentDBUser $ }}'
+    CONSENT_MANAGER_APP_PORT: '{{ .Values.containerPort }}'
+    CONSENT_MANAGER_OPENAPI_ROOT_PATH: '{{ .Values.openapiRootPath }}'
+    CONSENT_MANAGER_CONTROLLER_ID: '{{ tpl .Values.global.consentControllerId $ }}'
+    CONSENT_MANAGER_AUTH_ENABLED: '{{ .Values.global.consentManagerAuthEnabled }}'
+    CONSENT_MANAGER_AUTH_ISSUER: '{{ tpl .Values.global.keycloakIssuerUrl $ }}'
+    CONSENT_MANAGER_AUTH_JWKS_URL: '{{ tpl .Values.global.keycloakIssuerUrl $ }}/protocol/openid-connect/certs'
+    CONSENT_MANAGER_AUTH_ADMIN_ROLE: '{{ tpl .Values.global.consentManagerAdminRole $ }}'
+    CONSENT_MANAGER_CM_SIGNING_KID: '{{ tpl .Values.global.consentSigningKid $ }}'
+    CONSENT_MANAGER_CM_SIGNING_P12_PATH: '{{ .Values.signingKey.mountPath }}/{{ .Values.signingKey.secretKey }}'
+
+  envVarsFrom:
+    CONSENT_MANAGER_DB_PASSWORD:
+      secretKeyRef:
+        name: '{{ tpl .Values.global.consentDBSecret $ }}'
+        key: '{{ tpl .Values.global.consentDBUserPasswordKey $ }}'
+    CONSENT_MANAGER_CM_SIGNING_P12_PASSWORD:
+      secretKeyRef:
+        name: '{{ .Values.signingKey.passwordSecretName }}'
+        key: '{{ .Values.signingKey.passwordSecretKey }}'
+        optional: true
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+  startupProbe:
+    enabled: true
+    httpGet:
+      path: /ping
+      port: http
+    initialDelaySeconds: 0
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 30
+    successThreshold: 1
+  livenessProbe:
+    enabled: true
+    httpGet:
+      path: /ping
+      port: http
+    initialDelaySeconds: 20
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 6
+    successThreshold: 1
+  readinessProbe:
+    enabled: true
+    httpGet:
+      path: /ping
+      port: http
+    initialDelaySeconds: 0
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 6
+    successThreshold: 1
+
+  postgresCheckerInit:
+    enabled: true
+    image:
+      repository: jbergknoff/postgresql-client
+      tag: latest
+      pullPolicy: IfNotPresent
+    command:
+      - 'sh'
+    args:
+      - '-c'
+      - 'until pg_isready -U ${CONSENT_MANAGER_DB_USERNAME} -h ${CONSENT_MANAGER_DB_HOSTNAME} -p ${CONSENT_MANAGER_DB_PORT:-5432} -d ${CONSENT_MANAGER_DB_DBNAME:-consent_manager_db}; do sleep 3; done'
+    containerSecurityContext:
+      enabled: false

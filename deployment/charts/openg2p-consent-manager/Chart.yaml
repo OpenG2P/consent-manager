@@ -1,0 +1,33 @@
+apiVersion: v2
+name: openg2p-consent-manager
+description: Helm chart for the OpenG2P Consent Manager (PDP for outbound data sharing)
+type: application
+# This `version` is a STATIC placeholder. The helm-publish workflow derives the
+# real version from the branch/tag and overrides it at package time:
+#   develop  -> 0.0.0-develop.<run-number>
+#   N.N      -> N.N.0-develop.<run-number>
+#   N.N.N    -> N.N.N
+version: 1.0.0
+appVersion: "develop"
+dependencies:
+  - name: common
+    repository: https://openg2p.github.io/openg2p-helm
+    version: 2.30.0
+  - name: postgres-init
+    version: 1.2.0
+    repository: https://openg2p.github.io/openg2p-helm
+    condition: postgres-init.enabled
+  - name: keycloak-init
+    version: 1.1.1
+    repository: https://openg2p.github.io/openg2p-helm
+    condition: keycloak-init.enabled
+icon: https://openg2p.github.io/openg2p-helm/openg2p-logo.png
+keywords:
+  - openg2p
+  - consent-manager
+maintainers:
+  - email: info@openg2p.org
+    name: OpenG2P
+annotations:
+  catalog.cattle.io/display-name: "OpenG2P Consent Manager"
+  openg2p.org/add-to-rancher: ""

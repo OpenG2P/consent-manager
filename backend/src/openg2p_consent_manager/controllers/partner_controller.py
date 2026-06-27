@@ -1,10 +1,11 @@
 import logging
 from typing import Optional
 
-from fastapi import Query
+from fastapi import Depends, Query
 from fastapi.responses import JSONResponse
 from openg2p_fastapi_common.controller import BaseController
 
+from ..auth import require_role
 from ..config import Settings
 from ..schemas.partner import (
     KeyCreate,
@@ -32,31 +33,35 @@ class PartnerController(BaseController):
         self.router.prefix += "/consent/v1/partners"
         self.router.tags += ["Partners & Policy"]
 
+        # All partner/policy admin endpoints require the admin role.
+        admin = [Depends(require_role(_config.auth_admin_role))]
+
         self.router.add_api_route(
-            "", self.create_partner,
+            "", self.create_partner, dependencies=admin,
             responses={201: {"model": PartnerResponse}}, methods=["POST"], status_code=201,
         )
         self.router.add_api_route(
-            "/{partner_id}", self.get_partner,
+            "/{partner_id}", self.get_partner, dependencies=admin,
             responses={200: {"model": PartnerResponse}}, methods=["GET"],
         )
         self.router.add_api_route(
-            "/{partner_id}", self.update_partner,
+            "/{partner_id}", self.update_partner, dependencies=admin,
             responses={200: {"model": PartnerResponse}}, methods=["PATCH"],
         )
         self.router.add_api_route(
-            "/{partner_id}/keys", self.add_key,
+            "/{partner_id}/keys", self.add_key, dependencies=admin,
             responses={201: {"model": KeyResponse}}, methods=["POST"], status_code=201,
         )
         self.router.add_api_route(
-            "/{partner_id}/keys/{kid}", self.revoke_key, methods=["DELETE"], status_code=204,
+            "/{partner_id}/keys/{kid}", self.revoke_key, dependencies=admin,
+            methods=["DELETE"], status_code=204,
         )
         self.router.add_api_route(
-            "/{partner_id}/policy", self.upsert_policy,
+            "/{partner_id}/policy", self.upsert_policy, dependencies=admin,
             responses={200: {"model": PolicyResponse}}, methods=["PUT"],
         )
         self.router.add_api_route(
-            "/{partner_id}/policy", self.get_policy,
+            "/{partner_id}/policy", self.get_policy, dependencies=admin,
             responses={200: {"model": PolicyResponse}}, methods=["GET"],
         )
 

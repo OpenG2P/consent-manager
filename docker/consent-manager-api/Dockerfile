@@ -1,6 +1,6 @@
 FROM python:3.12-slim-bookworm
 
-# External OpenG2P framework ref. Override via build-arg.
+# External OpenG2P framework ref. Override via build-arg / CI input.
 ARG FASTAPI_COMMON_REF=1.1
 
 RUN apt-get update \
@@ -13,8 +13,9 @@ WORKDIR /app
 RUN pip install --no-cache-dir \
     "git+https://github.com/openg2p/openg2p-fastapi-common@${FASTAPI_COMMON_REF}#subdirectory=openg2p-fastapi-common"
 
-# Local source (build context = ./backend).
-COPY . /src/consent-manager
+# Local source. Build context = repo root, so the image always reflects the
+# current branch.
+COPY backend /src/consent-manager
 RUN pip install --no-cache-dir /src/consent-manager
 
 ENV PYTHONUNBUFFERED=1
@@ -22,7 +23,7 @@ ENV CONSENT_MANAGER_APP_HOST=0.0.0.0
 ENV CONSENT_MANAGER_APP_PORT=8000
 ENV CONSENT_MANAGER_NO_OF_WORKERS=4
 
-# Run migrations once, then serve. Multiple replicas may run this concurrently;
+# Run migrations once, then serve. Multiple replicas may run migrate concurrently;
 # create_migrate() is idempotent (CREATE TABLE IF NOT EXISTS).
 CMD python3 -m openg2p_consent_manager.main migrate; \
     gunicorn "openg2p_consent_manager.main:app" \

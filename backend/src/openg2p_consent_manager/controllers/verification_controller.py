@@ -1,11 +1,12 @@
 import logging
 from datetime import datetime, timezone
 
-from fastapi import Body
+from fastapi import Body, Depends
 from fastapi.responses import JSONResponse
 from openg2p_fastapi_common.controller import BaseController
 from pydantic import ValidationError
 
+from ..auth import current_identity
 from ..config import Settings
 from ..schemas.common import ReasonCode, StatusResponse
 from ..schemas.verification import Decision, ValidateRequest
@@ -25,14 +26,18 @@ class VerificationController(BaseController):
         self.router.prefix += "/consent/v1"
         self.router.tags += ["Verification"]
 
+        # The PEP (registry) calls these with a Keycloak service token. The
+        # consent object's own signature is the application-layer proof on top.
+        svc = [Depends(current_identity)]
         self.router.add_api_route(
-            "/validate", self.validate,
+            "/validate", self.validate, dependencies=svc,
             responses={200: {"model": Decision}}, methods=["POST"],
         )
         self.router.add_api_route(
-            "/consents/{consent_id}/status", self.get_status,
+            "/consents/{consent_id}/status", self.get_status, dependencies=svc,
             responses={200: {"model": StatusResponse}}, methods=["GET"],
         )
+        # Receipt fetch is public — the signature makes it self-verifying.
         self.router.add_api_route(
             "/receipts/{receipt_id}", self.get_receipt, methods=["GET"],
         )

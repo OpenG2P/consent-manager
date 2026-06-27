@@ -1,0 +1,67 @@
+name: Publish Consent Manager Helm chart
+
+on:
+  push:
+    branches-ignore:
+      - main
+    paths:
+      - 'deployment/charts/**'
+      - '.github/workflows/helm-publish.yml'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Explicit chart version. Empty = derive from branch.'
+        required: false
+        type: string
+
+jobs:
+  generate-charts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Resolve chart version (branch-gated, with manual override)
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          BRANCH="${GITHUB_REF_NAME}"
+          SUFFIX="${GITHUB_RUN_NUMBER}"
+          if [ -n "${INPUT_VERSION}" ]; then
+            VER="${INPUT_VERSION}"
+          elif [ "$BRANCH" = "develop" ]; then
+            VER="0.0.0-develop.${SUFFIX}"
+          elif printf '%s' "$BRANCH" | grep -qE '^[0-9]+\.[0-9]+$'; then
+            VER="${BRANCH}.0-develop.${SUFFIX}"
+          elif printf '%s' "$BRANCH" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            VER="${BRANCH}"
+          else
+            echo "SKIP=TRUE" >> "$GITHUB_ENV"
+          fi
+          echo "CHART_VERSION=${VER}" >> "$GITHUB_ENV"
+
+      - name: Package charts
+        if: env.SKIP != 'TRUE'
+        run: |
+          for chartdir in "deployment/charts"/*/; do
+            [ -f "${chartdir}Chart.yaml" ] || continue
+            chartname=$(basename "${chartdir%/}")
+            echo "Packaging chart: $chartname"
+            helm dep up "deployment/charts/$chartname"
+            helm package "deployment/charts/$chartname" --version "${CHART_VERSION}"
+          done
+
+      - name: Update index.yaml
+        if: env.SKIP != 'TRUE'
+        run: helm repo index .
+
+      - name: Commit Changes to gh-pages
+        if: env.SKIP != 'TRUE'
+        uses: EndBug/add-and-commit@v9
+        with:
+          branch: gh-pages
+          message: 'publish consent-manager helm chart ${{ github.repository }}@${{ github.sha }}'
+          add: './*.tgz ./index.yaml'

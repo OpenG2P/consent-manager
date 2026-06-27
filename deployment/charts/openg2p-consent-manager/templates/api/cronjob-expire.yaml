@@ -1,0 +1,30 @@
+{{- $values := .Values.consentManagerApi -}}
+{{- $context := dict "Values" (merge (deepCopy $values) (dict "global" .Values.global)) "Chart" .Chart "Release" .Release "Files" .Files "Capabilities" .Capabilities -}}
+{{- with $context -}}
+{{- if .Values.expiryCronjob.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "common.names.fullname" . }}-expire
+  labels: {{- include "common.labels.standard" (dict "customLabels" .Values.commonLabels "context" $) | nindent 4 }}
+spec:
+  schedule: {{ .Values.expiryCronjob.schedule | quote }}
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.expiryCronjob.backoffLimit }}
+      template:
+        metadata:
+          labels: {{- include "common.labels.standard" (dict "customLabels" .Values.podLabels "context" $) | nindent 12 }}
+            app.kubernetes.io/component: consent-manager-expire
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "consentManagerApi.serviceAccountName" . }}
+          containers:
+            - name: expire
+              image: {{ include "common.images.image" (dict "imageRoot" .Values.image "global" .Values.global) }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["python3", "-m", "openg2p_consent_manager.expire"]
+              env: {{- include "consentManagerApi.envVars" . | nindent 16 }}
+{{- end }}
+{{- end -}}

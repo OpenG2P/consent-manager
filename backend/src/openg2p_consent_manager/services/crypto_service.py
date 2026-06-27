@@ -4,6 +4,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa
 from cryptography.hazmat.primitives.asymmetric.ec import ECDSA
+from cryptography.hazmat.primitives.serialization import pkcs12
 from openg2p_fastapi_common.service import BaseService
 
 from ..config import Settings
@@ -27,22 +28,54 @@ class CryptoService(BaseService):
 
     def __init__(self, name="", **kwargs):
         super().__init__(name, **kwargs)
+        self._cert = None
         self._private_key = self._load_signing_key()
         self.kid = _config.cm_signing_kid
-        self.algorithm = _config.cm_signing_algorithm
+        self.algorithm = self._algorithm_for_key(self._private_key)
 
     # ── CM signing key ───────────────────────────────────────────────────────
 
     def _load_signing_key(self):
+        # Preferred: a PKCS#12 (.p12) keystore holding the private key + cert.
+        if _config.cm_signing_p12_path:
+            with open(_config.cm_signing_p12_path, "rb") as fh:
+                data = fh.read()
+            password = (
+                _config.cm_signing_p12_password.encode("utf-8")
+                if _config.cm_signing_p12_password
+                else None
+            )
+            key, cert, _ = pkcs12.load_key_and_certificates(data, password)
+            if key is None:
+                raise ValueError("No private key found in the PKCS#12 keystore")
+            self._cert = cert
+            _logger.info(
+                "Loaded CM signing key from PKCS#12 keystore %s",
+                _config.cm_signing_p12_path,
+            )
+            return key
+        # Fallback: a PEM private key string.
         pem = _config.cm_signing_private_key_pem.strip()
         if pem:
             return serialization.load_pem_private_key(pem.encode("utf-8"), password=None)
+        # Dev only: an ephemeral key.
         _logger.warning(
-            "consent_manager_cm_signing_private_key_pem not set — generating an "
-            "EPHEMERAL Ed25519 key. Receipts will not verify across restarts or "
-            "pods. Configure a persistent key for production."
+            "No CM signing key configured (cm_signing_p12_path / "
+            "cm_signing_private_key_pem) — generating an EPHEMERAL Ed25519 key. "
+            "Receipts will not verify across restarts or pods. Configure a "
+            "persistent key for production."
         )
         return ed25519.Ed25519PrivateKey.generate()
+
+    @staticmethod
+    def _algorithm_for_key(key) -> str:
+        if isinstance(key, ed25519.Ed25519PrivateKey):
+            return ALG_EDDSA
+        if isinstance(key, ec.EllipticCurvePrivateKey):
+            return ALG_ES256
+        if isinstance(key, rsa.RSAPrivateKey):
+            return ALG_RS256
+        return _config.cm_signing_algorithm
 
     def sign(self, message: bytes) -> str:
         """Sign bytes with the CM private key; return base64url signature."""
