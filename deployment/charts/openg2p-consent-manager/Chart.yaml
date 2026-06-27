@@ -7,7 +7,7 @@ type: application
 #   develop  -> 0.0.0-develop.<run-number>
 #   N.N      -> N.N.0-develop.<run-number>
 #   N.N.N    -> N.N.N
-version: 1.0.0
+version: 0.0.0-develop
 appVersion: "develop"
 dependencies:
   - name: common

@@ -16,7 +16,9 @@ services:
       retries: 5
 
   backend:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: docker/consent-manager-api/Dockerfile
     ports:
       - "8000:8000"
     environment:
@@ -26,7 +28,9 @@ services:
       CONSENT_MANAGER_DB_PASSWORD: postgres
       CONSENT_MANAGER_DB_DBNAME: consent_manager_db
       CONSENT_MANAGER_CONTROLLER_ID: openg2p.registry
-      # Provide a persistent signing key in real deployments (see backend/.env.example).
+      # Local dev: disable Keycloak auth and use an ephemeral signing key.
+      # Provide a .p12 key + Keycloak settings in real deployments (see backend/.env.example).
+      CONSENT_MANAGER_AUTH_ENABLED: "false"
       CONSENT_MANAGER_NO_OF_WORKERS: "4"
     depends_on:
       db:
