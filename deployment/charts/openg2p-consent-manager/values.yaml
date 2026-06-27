@@ -17,10 +17,11 @@ global:
   keycloakRealm: staff
   keycloakIssuerUrl: '{{ tpl .Values.global.keycloakBaseUrl $ }}/realms/{{ tpl .Values.global.keycloakRealm $ }}'
   consentManagerAuthEnabled: true
+  consentManagerAuthClientId: consent-manager
   consentManagerAdminRole: CONSENT_MANAGER_ADMIN
 
-  # ── This data controller / registry tenant ──────────────────────────────
-  consentControllerId: openg2p.registry
+  # The data controller / module is a per-partner attribute set at onboarding —
+  # one shared CM serves many modules, so there is no global controller setting.
 
   # ── CM receipt signing key (PKCS#12) ────────────────────────────────────
   # Mount a .p12 from a Secret; see consentManagerApi.signingKey below.
@@ -39,8 +40,50 @@ postgres-init:
       secret: '{{ tpl .Values.global.consentDBSecret $ }}'
       secretUserPasswordKey: '{{ tpl .Values.global.consentDBUserPasswordKey $ }}'
 
+# Provisions the Consent Manager client + admin role in Keycloak. Requires the
+# commons Keycloak to be reachable with admin credentials. The CM service itself
+# only validates tokens via JWKS (no client secret needed) — this block exists to
+# DEFINE the CONSENT_MANAGER_ADMIN role and to give admin automation / PEP callers
+# a confidential client to obtain client-credentials tokens from.
 keycloak-init:
-  enabled: false
+  enabled: true
+  keycloak:
+    # Internal URL to reach Keycloak within the namespace (commons layer).
+    url: 'http://commons-keycloak:80'
+    user: 'admin'
+    password: ''
+    existingSecret: 'commons-keycloak'
+    existingSecretKey: 'admin-password'
+  suffix: '{{ .Release.Namespace }}'
+  realms:
+    '{{ tpl .Values.global.keycloakRealm $ }}':
+      clients:
+        # Confidential client. keycloak-init auto-generates a K8s Secret named
+        # `consent-manager` with key `client_secret`. The CONSENT_MANAGER_ADMIN
+        # client role is defined here and read from resource_access in the token.
+        - clientId: consent-manager
+          name: OpenG2P Consent Manager
+          description: API client + role definitions for the Consent Manager. Service account enabled so onboarding automation / PEP callers can obtain client-credentials tokens.
+          publicClient: false
+          serviceAccountsEnabled: true
+          redirectUris:
+            - 'https://{{ tpl .Values.global.consentManagerHostname $ }}/*'
+          clientRoles:
+            # Required by partner/policy admin endpoints. Must match
+            # global.consentManagerAdminRole.
+            - CONSENT_MANAGER_ADMIN
+      users:
+        # First-install operator can administer partners/policies from the UI/CLI.
+        - username: admin
+          clientRoleMappings:
+            consent-manager:
+              - CONSENT_MANAGER_ADMIN
+        # The client's own service account gets admin too, so client-credentials
+        # tokens from `consent-manager` can drive partner onboarding automation.
+        - username: service-account-consent-manager
+          clientRoleMappings:
+            consent-manager:
+              - CONSENT_MANAGER_ADMIN
 
 consentManagerApi:
   enabled: true
@@ -124,7 +167,6 @@ consentManagerApi:
     CONSENT_MANAGER_DB_USERNAME: '{{ tpl .Values.global.consentDBUser $ }}'
     CONSENT_MANAGER_APP_PORT: '{{ .Values.containerPort }}'
     CONSENT_MANAGER_OPENAPI_ROOT_PATH: '{{ .Values.openapiRootPath }}'
-    CONSENT_MANAGER_CONTROLLER_ID: '{{ tpl .Values.global.consentControllerId $ }}'
     CONSENT_MANAGER_AUTH_ENABLED: '{{ .Values.global.consentManagerAuthEnabled }}'
     CONSENT_MANAGER_AUTH_ISSUER: '{{ tpl .Values.global.keycloakIssuerUrl $ }}'
     CONSENT_MANAGER_AUTH_JWKS_URL: '{{ tpl .Values.global.keycloakIssuerUrl $ }}/protocol/openid-connect/certs'

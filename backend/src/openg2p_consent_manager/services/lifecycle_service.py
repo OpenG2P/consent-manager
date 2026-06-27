@@ -44,6 +44,10 @@ class LifecycleService(BaseService):
         if policy is None:
             raise LifecycleError(404, "partner or policy not found")
 
+        partner = await self.partners.get_partner(data.partner_id)
+        if partner is None:
+            raise LifecycleError(404, "partner not found")
+
         # Reject up front anything the policy can never satisfy.
         if not set(data.requested_scopes).issubset(set(policy.allowed_data_scopes or [])):
             raise LifecycleError(422, "scope_exceeds_policy")
@@ -53,7 +57,7 @@ class LifecycleService(BaseService):
             req = ConsentRequest(
                 subject_id_type=data.subject_id.type,
                 subject_id_value=data.subject_id.value,
-                controller_id=_config.controller_id,
+                controller_id=partner.controller_id,
                 partner_id=data.partner_id,
                 purpose=data.purpose,
                 requested_scopes=data.requested_scopes,
@@ -130,7 +134,7 @@ class LifecycleService(BaseService):
             artefact = ConsentArtefact(
                 subject_id_type=req.subject_id_type,
                 subject_id_value=req.subject_id_value,
-                controller_id=_config.controller_id,
+                controller_id=req.controller_id,
                 partner_id=req.partner_id,
                 purpose=req.purpose,
                 data_scopes=req.requested_scopes,

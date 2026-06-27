@@ -42,17 +42,21 @@ class PolicyService(BaseService):
 
         version = policy.version
         now = datetime.now(timezone.utc)
+        partner = material["partner"]
 
-        # 4. Audience — object aud must match this partner AND this controller.
-        if consent_object.data_controller != _config.controller_id:
-            return PolicyResult(
-                False, ReasonCode.audience_mismatch,
-                "data_controller does not match this controller", policy_version=version,
-            )
-        if consent_object.aud != material["partner"].audience:
+        # 4. Audience — the object must name this partner (aud) and the module the
+        #    partner was onboarded under (data_controller). One shared CM serves
+        #    many modules; the controller is a per-partner attribute, not global.
+        if consent_object.aud != partner.audience:
             return PolicyResult(
                 False, ReasonCode.audience_mismatch,
                 "aud does not match the partner", policy_version=version,
+            )
+        if consent_object.data_controller != partner.controller_id:
+            return PolicyResult(
+                False, ReasonCode.audience_mismatch,
+                "data_controller does not match the partner's onboarded module",
+                policy_version=version,
             )
 
         # 5. Subject — present and of an allowed id type.

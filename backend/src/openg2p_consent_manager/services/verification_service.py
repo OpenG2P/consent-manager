@@ -152,7 +152,7 @@ class VerificationService(BaseService):
         artefact = ConsentArtefact(
             subject_id_type=obj.subject_id.type,
             subject_id_value=obj.subject_id.value,
-            controller_id=_config.controller_id,
+            controller_id=partner.controller_id,
             partner_id=partner.id,
             purpose=obj.purpose,
             data_scopes=obj.data_scopes,

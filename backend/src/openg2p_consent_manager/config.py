@@ -43,9 +43,10 @@ class Settings(BaseSettings):
     cm_signing_kid: str = "cm-2025-01"
     cm_signing_algorithm: str = "EdDSA"  # fallback hint only; key type wins
 
-    # Identifier of this data controller / registry tenant. Consent objects must
-    # carry this value as their data_controller for the audience check to pass.
-    controller_id: str = "openg2p.registry"
+    # NOTE: the data controller / module is a per-partner attribute
+    # (Partner.controller_id), set at onboarding — one shared CM serves many
+    # modules. A consent object's data_controller is validated against the
+    # onboarded partner's controller_id, so there is no single global controller.
 
     # Replay window for embedded consent objects (seconds). issued_at must be
     # within now ± this skew.
