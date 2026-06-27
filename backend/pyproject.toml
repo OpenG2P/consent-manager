@@ -18,7 +18,9 @@ classifiers = [
 dependencies = [
   "openg2p-fastapi-common >=1.1.4",
   "asyncpg",
-  "psycopg2",
+  # Prebuilt wheel — avoids needing C headers/libpq-dev to compile from source.
+  # The app uses the async asyncpg driver; this is only the sync fallback.
+  "psycopg2-binary",
   "cryptography >=42.0.0",
   "pyjwt >=2.8.0",
 ]

@@ -1,0 +1,129 @@
+questions:
+# ------------------------------ General -----------------------------
+# The hostname "namespace" segment is auto-derived from the install namespace
+# (.Release.Namespace); override the full hostname here only if it must differ.
+- variable: global.consentManagerHostname
+  description: Hostname for the Consent Manager API
+  type: string
+  label: Consent Manager Hostname
+  group: General
+- variable: consentManagerApi.openapiRootPath
+  description: Path prefix the API is served under (behind the ingress/VirtualService)
+  type: string
+  default: /api/consent-manager
+  label: API Root Path
+  group: General
+- variable: consentManagerApi.image.tag
+  description: Container image tag to deploy (e.g. develop or a release like 1.2.0)
+  type: string
+  default: develop
+  label: Image Tag
+  group: General
+
+# ---------------------------- Database ------------------------------
+- variable: global.postgresqlHost
+  description: PostgreSQL host for the Consent Manager database
+  type: string
+  default: commons-postgresql
+  label: PostgreSQL Host
+  group: Database
+
+# -------------------------- Authentication --------------------------
+- variable: global.consentManagerAuthEnabled
+  description: Require Keycloak bearer tokens on protected endpoints. Turn off only for local/dev.
+  type: boolean
+  default: true
+  label: Enable Keycloak Auth
+  group: Authentication
+- variable: global.keycloakBaseUrl
+  description: Base URL of the Keycloak server (used to derive issuer + JWKS)
+  type: string
+  label: Keycloak Base URL
+  group: Authentication
+  show_if: global.consentManagerAuthEnabled=true
+- variable: global.keycloakRealm
+  description: Keycloak realm the Consent Manager client and roles live under
+  type: string
+  default: staff
+  label: Keycloak Realm
+  group: Authentication
+  show_if: global.consentManagerAuthEnabled=true
+- variable: global.consentManagerAdminRole
+  description: Role required to call the partner/policy admin endpoints
+  type: string
+  default: CONSENT_MANAGER_ADMIN
+  label: Admin Role
+  group: Authentication
+  show_if: global.consentManagerAuthEnabled=true
+- variable: keycloak-init.enabled
+  description: Provision the consent-manager Keycloak client and admin role automatically (requires Keycloak admin access)
+  type: boolean
+  default: true
+  label: Provision Keycloak Client
+  group: Authentication
+  show_if: global.consentManagerAuthEnabled=true
+
+# ----------------------------- Signing ------------------------------
+- variable: consentManagerApi.signingKey.enabled
+  description: Mount the CM receipt-signing private key from a PKCS#12 (.p12) Secret. If off, an ephemeral dev key is generated.
+  type: boolean
+  default: false
+  label: Use .p12 Signing Key
+  group: Signing
+- variable: consentManagerApi.signingKey.secretName
+  description: Name of the Secret holding the .p12 keystore (and its password)
+  type: string
+  default: consent-manager-signing
+  label: Signing Key Secret
+  group: Signing
+  show_if: consentManagerApi.signingKey.enabled=true
+- variable: global.consentSigningKid
+  description: Key id (kid) advertised for the CM signing key in JWKS
+  type: string
+  default: cm-2025-01
+  label: Signing Key ID
+  group: Signing
+
+# ----------------------------- Scaling ------------------------------
+- variable: consentManagerApi.autoscaling.enabled
+  description: Autoscale the stateless API pods on CPU/memory. Recommended for high consent-verification rates.
+  type: boolean
+  default: true
+  label: Enable Autoscaling
+  group: Scaling
+- variable: consentManagerApi.autoscaling.minReplicas
+  description: Minimum number of API pods
+  type: int
+  default: 2
+  label: Min Replicas
+  group: Scaling
+  show_if: consentManagerApi.autoscaling.enabled=true
+- variable: consentManagerApi.autoscaling.maxReplicas
+  description: Maximum number of API pods
+  type: int
+  default: 20
+  label: Max Replicas
+  group: Scaling
+  show_if: consentManagerApi.autoscaling.enabled=true
+- variable: consentManagerApi.replicaCount
+  description: Fixed number of API pods (used when autoscaling is off)
+  type: int
+  default: 1
+  label: Replica Count
+  group: Scaling
+  show_if: consentManagerApi.autoscaling.enabled=false
+
+# ----------------------------- Expiry -------------------------------
+- variable: consentManagerApi.expiryCronjob.enabled
+  description: Run the consent-expiry sweep as a CronJob (keeps API pods stateless)
+  type: boolean
+  default: true
+  label: Enable Expiry CronJob
+  group: Expiry
+- variable: consentManagerApi.expiryCronjob.schedule
+  description: Cron schedule for the expiry sweep
+  type: string
+  default: "*/15 * * * *"
+  label: Expiry Schedule
+  group: Expiry
+  show_if: consentManagerApi.expiryCronjob.enabled=true
