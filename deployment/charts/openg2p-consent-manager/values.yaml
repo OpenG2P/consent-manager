@@ -91,11 +91,12 @@ consentManagerApi:
   hostname: '{{ tpl .Values.global.consentManagerHostname $ }}'
   replicaCount: 1
 
-  # Horizontal scaling — stateless pods; turn this on in production.
+  # Horizontal scaling — the pods are stateless, so turn this on for high
+  # consent-verification load. Off by default (a single replica is enough).
   autoscaling:
-    enabled: true
-    minReplicas: 2
-    maxReplicas: 20
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 10
     targetCPUUtilizationPercentage: 80
     targetMemoryUtilizationPercentage: 80
 
@@ -143,13 +144,27 @@ consentManagerApi:
       enabled: false
 
   # ── CM signing key (.p12) mounted from a Secret ─────────────────────────
+  # Enabled by default with a BUNDLED DEMO key so a fresh install signs receipts
+  # with a fixed, consistent key out of the box (for testing). REPLACE IT FOR
+  # PRODUCTION — the demo key + password ship in this chart and are public.
   signingKey:
-    enabled: false
-    # Name of an existing Secret containing the .p12 under key `cm_signing.p12`.
+    enabled: true
+    # Where the .p12 comes from:
+    #   demo     → use the demo key bundled in this chart (files/cm_signing_demo.p12).
+    #              Fixed, consistent across pods. Testing only.
+    #   existing → reference a Secret you created via Rancher Storage → Secrets
+    #              (file upload — no CLI). Set `secretName` to its name. PRODUCTION.
+    #   inline   → the chart creates the Secret from `p12Base64` + `password` below.
+    #              Convenient, but the material lives in the Helm release.
+    mode: demo
+    demoPassword: openg2p
+    # Inline material — used only when mode=inline:
+    p12Base64: ""
+    password: ""
+    # Secret reference (the chart-created Secret, for demo/inline, also takes this name):
     secretName: consent-manager-signing
     secretKey: cm_signing.p12
     mountPath: /app/secrets
-    # Name of a Secret holding the .p12 password under key `password`.
     passwordSecretName: consent-manager-signing
     passwordSecretKey: password
 
@@ -172,7 +187,9 @@ consentManagerApi:
     CONSENT_MANAGER_AUTH_JWKS_URL: '{{ tpl .Values.global.keycloakIssuerUrl $ }}/protocol/openid-connect/certs'
     CONSENT_MANAGER_AUTH_ADMIN_ROLE: '{{ tpl .Values.global.consentManagerAdminRole $ }}'
     CONSENT_MANAGER_CM_SIGNING_KID: '{{ tpl .Values.global.consentSigningKid $ }}'
-    CONSENT_MANAGER_CM_SIGNING_P12_PATH: '{{ .Values.signingKey.mountPath }}/{{ .Values.signingKey.secretKey }}'
+    # Only set when the .p12 Secret is actually mounted; empty otherwise so the
+    # service falls back to PEM/ephemeral instead of crashing on a missing file.
+    CONSENT_MANAGER_CM_SIGNING_P12_PATH: '{{ if .Values.signingKey.enabled }}{{ .Values.signingKey.mountPath }}/{{ .Values.signingKey.secretKey }}{{ end }}'
 
   envVarsFrom:
     CONSENT_MANAGER_DB_PASSWORD:

@@ -65,36 +65,60 @@ questions:
 
 # ----------------------------- Signing ------------------------------
 - variable: consentManagerApi.signingKey.enabled
-  description: Mount the CM receipt-signing private key from a PKCS#12 (.p12) Secret. If off, an ephemeral dev key is generated.
+  description: Sign receipts with a PKCS#12 (.p12) key. If off, an ephemeral dev key is generated (receipts won't verify across pods).
   type: boolean
-  default: false
+  default: true
   label: Use .p12 Signing Key
   group: Signing
-- variable: consentManagerApi.signingKey.secretName
-  description: Name of the Secret holding the .p12 keystore (and its password)
-  type: string
-  default: consent-manager-signing
-  label: Signing Key Secret
+- variable: consentManagerApi.signingKey.mode
+  description: "demo = bundled demo key (testing only); existing = reference a Secret you uploaded via Storage → Secrets (production); inline = paste the .p12 base64 below."
+  type: enum
+  options:
+    - demo
+    - existing
+    - inline
+  default: demo
+  label: Signing Key Source
   group: Signing
   show_if: consentManagerApi.signingKey.enabled=true
+- variable: consentManagerApi.signingKey.secretName
+  description: Name of the existing Secret holding the .p12 (key cm_signing.p12) and its password (key password). Create it via Storage → Secrets with a file upload.
+  type: string
+  default: consent-manager-signing
+  label: Existing Signing Secret
+  group: Signing
+  show_if: consentManagerApi.signingKey.enabled=true&&consentManagerApi.signingKey.mode=existing
+- variable: consentManagerApi.signingKey.p12Base64
+  description: Base64-encoded contents of your .p12 file (paste it here).
+  type: multiline
+  label: .p12 (base64)
+  group: Signing
+  show_if: consentManagerApi.signingKey.enabled=true&&consentManagerApi.signingKey.mode=inline
+- variable: consentManagerApi.signingKey.password
+  description: Password that unlocks the .p12 keystore
+  type: password
+  label: .p12 Password
+  group: Signing
+  show_if: consentManagerApi.signingKey.enabled=true&&consentManagerApi.signingKey.mode=inline
 - variable: global.consentSigningKid
   description: Key id (kid) advertised for the CM signing key in JWKS
   type: string
   default: cm-2025-01
   label: Signing Key ID
   group: Signing
+  show_if: consentManagerApi.signingKey.enabled=true
 
 # ----------------------------- Scaling ------------------------------
 - variable: consentManagerApi.autoscaling.enabled
-  description: Autoscale the stateless API pods on CPU/memory. Recommended for high consent-verification rates.
+  description: Autoscale the stateless API pods on CPU/memory. Enable for high consent-verification rates; a single replica is enough otherwise.
   type: boolean
-  default: true
+  default: false
   label: Enable Autoscaling
   group: Scaling
 - variable: consentManagerApi.autoscaling.minReplicas
   description: Minimum number of API pods
   type: int
-  default: 2
+  default: 1
   label: Min Replicas
   group: Scaling
   show_if: consentManagerApi.autoscaling.enabled=true

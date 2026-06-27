@@ -1,4 +1,5 @@
 import logging
+import os
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
@@ -37,8 +38,18 @@ class CryptoService(BaseService):
 
     def _load_signing_key(self):
         # Preferred: a PKCS#12 (.p12) keystore holding the private key + cert.
-        if _config.cm_signing_p12_path:
-            with open(_config.cm_signing_p12_path, "rb") as fh:
+        p12_path = _config.cm_signing_p12_path.strip()
+        if p12_path and not os.path.exists(p12_path):
+            # Configured but not mounted — don't crash-loop. Fall through to the
+            # PEM / ephemeral fallback with a loud error so it's obvious in logs.
+            _logger.error(
+                "cm_signing_p12_path is set to %s but no file exists there "
+                "(is the signing-key Secret mounted?). Falling back to PEM/ephemeral.",
+                p12_path,
+            )
+            p12_path = ""
+        if p12_path:
+            with open(p12_path, "rb") as fh:
                 data = fh.read()
             password = (
                 _config.cm_signing_p12_password.encode("utf-8")
@@ -50,8 +61,7 @@ class CryptoService(BaseService):
                 raise ValueError("No private key found in the PKCS#12 keystore")
             self._cert = cert
             _logger.info(
-                "Loaded CM signing key from PKCS#12 keystore %s",
-                _config.cm_signing_p12_path,
+                "Loaded CM signing key from PKCS#12 keystore %s", p12_path
             )
             return key
         # Fallback: a PEM private key string.
