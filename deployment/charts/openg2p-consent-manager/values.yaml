@@ -269,8 +269,10 @@ consentManagerApi:
 
 # ── In-cluster sanity suite ─────────────────────────────────────────────────
 # A Helm post-install/post-upgrade Job that runs the sanity tests against the
-# freshly deployed service — so a broken image/config is flagged on every
-# Rancher Install/Upgrade, no command line needed. Non-blocking by default.
+# freshly deployed service. Because it is a Helm hook, a failed Job fails the
+# whole release — so if sanity runs, the deploy is only "successful" when it
+# passes. For production where you don't want it (e.g. to avoid the e2e creating
+# data), set enabled=false. Default: enabled, smoke+contract only (no data), gating.
 sanity:
   enabled: true
   image:
@@ -284,9 +286,11 @@ sanity:
   # false → smoke + contract only (creates no data, needs no token).
   # true  → also the data-creating /validate round-trip (needs Keycloak token).
   runE2e: false
-  # false → the Job exits 0 even if tests fail (never blocks the install; read
-  #         the pod logs). true → a failing run fails the install/upgrade.
-  failOnError: false
+  # GATE the deploy on sanity. true (default) → a failing run fails the Job and
+  # therefore the install/upgrade. ADVANCED escape hatch: set false for
+  # report-only (Job exits 0 on failure, deploy succeeds; read the pod logs).
+  # Not exposed in the Rancher form — running sanity gates by design.
+  failOnError: true
   readinessTimeout: 180
   controllerId: sanity-controller
   resources:

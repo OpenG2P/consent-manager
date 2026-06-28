@@ -147,23 +147,18 @@ questions:
   show_if: consentManagerApi.expiryCronjob.enabled=true
 
 # ----------------------------- Sanity -------------------------------
+# If sanity runs, it GATES the deploy: a failure fails the install/upgrade (the
+# Job is a Helm hook). Turn it off for production where you don't want it.
 - variable: sanity.enabled
-  description: Run sanity tests as a Job on every install/upgrade, so a broken image/config is flagged immediately. Read results in the Job pod's logs.
+  description: Run sanity tests on every install/upgrade and GATE on them — a failure fails the deploy (visible in Rancher). Turn off for production where you don't want test runs (e.g. to avoid the e2e creating data). Results are in the Job pod's logs.
   type: boolean
   default: true
-  label: Run Sanity Tests
+  label: Run Sanity Tests (gates the deploy)
   group: Sanity
 - variable: sanity.runE2e
-  description: "Also run the full end-to-end /validate round-trip (onboards a TEST_SANITY partner, then suspends it). Off = smoke + contract only, which create no data."
+  description: "Also run the full end-to-end /validate round-trip (onboards a TEST_SANITY partner, then suspends it). Off = smoke + contract only, which create no data — safe for production."
   type: boolean
   default: false
   label: Run Full E2E
-  group: Sanity
-  show_if: sanity.enabled=true
-- variable: sanity.failOnError
-  description: Fail the install/upgrade if any sanity test fails. Off = informational only (the deploy succeeds regardless; check the logs).
-  type: boolean
-  default: false
-  label: Fail Install On Sanity Failure
   group: Sanity
   show_if: sanity.enabled=true
