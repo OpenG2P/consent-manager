@@ -150,10 +150,13 @@ consentManagerApi:
       enabled: false
 
   # ── CM signing key (.p12) mounted from a Secret ─────────────────────────
-  # Enabled by default with a BUNDLED DEMO key so a fresh install signs receipts
-  # with a fixed, consistent key out of the box (for testing). REPLACE IT FOR
-  # PRODUCTION — the demo key + password ship in this chart and are public.
+  # Receipts are ALWAYS signed. A fresh install uses the BUNDLED DEMO key so it
+  # works out of the box (testing) — REPLACE IT FOR PRODUCTION (the demo key +
+  # password ship in this chart and are public). The only real choice is `mode`.
   signingKey:
+    # Advanced / internal — leave true. Set false ONLY for a throwaway local pod
+    # where you accept a per-pod ephemeral key (no shared, persistent key). This
+    # is not exposed in the Rancher form; production always signs with a .p12.
     enabled: true
     # Where the .p12 comes from:
     #   demo     → use the demo key bundled in this chart (files/cm_signing_demo.p12).

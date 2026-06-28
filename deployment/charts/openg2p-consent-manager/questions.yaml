@@ -64,14 +64,9 @@ questions:
   show_if: global.consentManagerAuthEnabled=true
 
 # ----------------------------- Signing ------------------------------
-- variable: consentManagerApi.signingKey.enabled
-  description: Sign receipts with a PKCS#12 (.p12) key. If off, an ephemeral dev key is generated (receipts won't verify across pods).
-  type: boolean
-  default: true
-  label: Use .p12 Signing Key
-  group: Signing
+# Receipts are ALWAYS signed; the only choice is where the .p12 comes from.
 - variable: consentManagerApi.signingKey.mode
-  description: "demo = bundled demo key (testing only); existing = reference a Secret you uploaded via Storage → Secrets (production); inline = paste the .p12 base64 below."
+  description: "Where the receipt-signing .p12 comes from. demo = bundled demo key (testing only — public, replace for production); existing = reference a Secret you uploaded via Storage → Secrets (production); inline = paste the .p12 base64 below."
   type: enum
   options:
     - demo
@@ -80,33 +75,32 @@ questions:
   default: demo
   label: Signing Key Source
   group: Signing
-  show_if: consentManagerApi.signingKey.enabled=true
 - variable: consentManagerApi.signingKey.secretName
   description: Name of the existing Secret holding the .p12 (key cm_signing.p12) and its password (key password). Create it via Storage → Secrets with a file upload.
   type: string
   default: consent-manager-signing
   label: Existing Signing Secret
   group: Signing
-  show_if: consentManagerApi.signingKey.enabled=true&&consentManagerApi.signingKey.mode=existing
+  show_if: consentManagerApi.signingKey.mode=existing
 - variable: consentManagerApi.signingKey.p12Base64
   description: Base64-encoded contents of your .p12 file (paste it here).
   type: multiline
   label: .p12 (base64)
   group: Signing
-  show_if: consentManagerApi.signingKey.enabled=true&&consentManagerApi.signingKey.mode=inline
+  show_if: consentManagerApi.signingKey.mode=inline
 - variable: consentManagerApi.signingKey.password
   description: Password that unlocks the .p12 keystore
   type: password
   label: .p12 Password
   group: Signing
-  show_if: consentManagerApi.signingKey.enabled=true&&consentManagerApi.signingKey.mode=inline
+  show_if: consentManagerApi.signingKey.mode=inline
 - variable: global.consentSigningKid
   description: A label (kid) for the signing key, advertised in JWKS and stamped on receipts. NOT read from the .p12 — set your own when using your own key, and change it on every key rotation.
   type: string
   default: cm-2025-01
   label: Signing Key ID
   group: Signing
-  show_if: consentManagerApi.signingKey.enabled=true&&consentManagerApi.signingKey.mode!=demo
+  show_if: consentManagerApi.signingKey.mode!=demo
 
 # ----------------------------- Scaling ------------------------------
 - variable: consentManagerApi.autoscaling.enabled
