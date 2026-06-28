@@ -1,0 +1,18 @@
+[project]
+name = "openg2p-consent-manager-sanity"
+version = "0.1.0"
+description = "In-cluster sanity suite for the OpenG2P Consent Manager"
+requires-python = ">=3.10"
+dependencies = [
+  "pytest>=8",
+  "httpx>=0.27",
+  "cryptography>=42",
+]
+
+[tool.pytest.ini_options]
+markers = [
+  "smoke: liveness/wiring checks that need no auth and create no data",
+  "contract: API contract checks (e.g. auth is enforced)",
+  "e2e: end-to-end signed /validate round-trip (creates a TEST_SANITY partner)",
+]
+addopts = "-ra -q"

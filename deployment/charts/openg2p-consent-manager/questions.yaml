@@ -101,12 +101,12 @@ questions:
   group: Signing
   show_if: consentManagerApi.signingKey.enabled=true&&consentManagerApi.signingKey.mode=inline
 - variable: global.consentSigningKid
-  description: Key id (kid) advertised for the CM signing key in JWKS
+  description: A label (kid) for the signing key, advertised in JWKS and stamped on receipts. NOT read from the .p12 — set your own when using your own key, and change it on every key rotation.
   type: string
   default: cm-2025-01
   label: Signing Key ID
   group: Signing
-  show_if: consentManagerApi.signingKey.enabled=true
+  show_if: consentManagerApi.signingKey.enabled=true&&consentManagerApi.signingKey.mode!=demo
 
 # ----------------------------- Scaling ------------------------------
 - variable: consentManagerApi.autoscaling.enabled
@@ -151,3 +151,25 @@ questions:
   label: Expiry Schedule
   group: Expiry
   show_if: consentManagerApi.expiryCronjob.enabled=true
+
+# ----------------------------- Sanity -------------------------------
+- variable: sanity.enabled
+  description: Run sanity tests as a Job on every install/upgrade, so a broken image/config is flagged immediately. Read results in the Job pod's logs.
+  type: boolean
+  default: true
+  label: Run Sanity Tests
+  group: Sanity
+- variable: sanity.runE2e
+  description: "Also run the full end-to-end /validate round-trip (onboards a TEST_SANITY partner, then suspends it). Off = smoke + contract only, which create no data."
+  type: boolean
+  default: false
+  label: Run Full E2E
+  group: Sanity
+  show_if: sanity.enabled=true
+- variable: sanity.failOnError
+  description: Fail the install/upgrade if any sanity test fails. Off = informational only (the deploy succeeds regardless; check the logs).
+  type: boolean
+  default: false
+  label: Fail Install On Sanity Failure
+  group: Sanity
+  show_if: sanity.enabled=true

@@ -33,6 +33,16 @@ class CryptoService(BaseService):
         self._private_key = self._load_signing_key()
         self.kid = _config.cm_signing_kid
         self.algorithm = self._algorithm_for_key(self._private_key)
+        if _config.cm_signing_is_demo:
+            _logger.warning(
+                "================================================================\n"
+                "  Signing receipts with the PUBLIC BUNDLED DEMO key (kid=%s).\n"
+                "  This key ships in the chart and is NOT secret — anyone can\n"
+                "  forge receipts. REPLACE IT FOR PRODUCTION: set the Signing Key\n"
+                "  Source to 'existing' (or 'inline') with your own .p12.\n"
+                "================================================================",
+                self.kid,
+            )
 
     # ── CM signing key ───────────────────────────────────────────────────────
 

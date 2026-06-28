@@ -25,6 +25,9 @@ global:
 
   # ── CM receipt signing key (PKCS#12) ────────────────────────────────────
   # Mount a .p12 from a Secret; see consentManagerApi.signingKey below.
+  # consentSigningKid is a LABEL for the key (advertised in JWKS + receipts) —
+  # it is NOT read from the .p12. Set your own when using your own key, and
+  # change it on every key rotation so old/new public keys coexist in the JWKS.
   consentSigningKid: cm-2025-01
 
 postgres-init:
@@ -189,7 +192,10 @@ consentManagerApi:
     CONSENT_MANAGER_AUTH_ISSUER: '{{ tpl .Values.global.keycloakIssuerUrl $ }}'
     CONSENT_MANAGER_AUTH_JWKS_URL: '{{ tpl .Values.global.keycloakIssuerUrl $ }}/protocol/openid-connect/certs'
     CONSENT_MANAGER_AUTH_ADMIN_ROLE: '{{ tpl .Values.global.consentManagerAdminRole $ }}'
-    CONSENT_MANAGER_CM_SIGNING_KID: '{{ tpl .Values.global.consentSigningKid $ }}'
+    # In demo mode, force a distinctive kid so any receipt / JWKS makes it obvious
+    # a demo (insecure) key is in use; otherwise use the configured kid.
+    CONSENT_MANAGER_CM_SIGNING_KID: '{{ if eq .Values.signingKey.mode "demo" }}cm-demo-INSECURE{{ else }}{{ tpl .Values.global.consentSigningKid $ }}{{ end }}'
+    CONSENT_MANAGER_CM_SIGNING_IS_DEMO: '{{ if and .Values.signingKey.enabled (eq .Values.signingKey.mode "demo") }}true{{ else }}false{{ end }}'
     # Only set when the .p12 Secret is actually mounted; empty otherwise so the
     # service falls back to PEM/ephemeral instead of crashing on a missing file.
     CONSENT_MANAGER_CM_SIGNING_P12_PATH: '{{ if .Values.signingKey.enabled }}{{ .Values.signingKey.mountPath }}/{{ .Values.signingKey.secretKey }}{{ end }}'
@@ -257,3 +263,33 @@ consentManagerApi:
       - 'until pg_isready -U ${CONSENT_MANAGER_DB_USERNAME} -h ${CONSENT_MANAGER_DB_HOSTNAME} -p ${CONSENT_MANAGER_DB_PORT:-5432} -d ${CONSENT_MANAGER_DB_DBNAME:-consent_manager_db}; do sleep 3; done'
     containerSecurityContext:
       enabled: false
+
+# ── In-cluster sanity suite ─────────────────────────────────────────────────
+# A Helm post-install/post-upgrade Job that runs the sanity tests against the
+# freshly deployed service — so a broken image/config is flagged on every
+# Rancher Install/Upgrade, no command line needed. Non-blocking by default.
+sanity:
+  enabled: true
+  image:
+    repository: openg2p/openg2p-consent-manager-sanity
+    tag: develop
+    pullPolicy: Always
+  # In-cluster Service URL (no ingress path prefix). The chart Service is
+  # <release>-api on port 80.
+  baseUrl: 'http://{{ .Release.Name }}-api'
+  verifyTls: false
+  # false → smoke + contract only (creates no data, needs no token).
+  # true  → also the data-creating /validate round-trip (needs Keycloak token).
+  runE2e: false
+  # false → the Job exits 0 even if tests fail (never blocks the install; read
+  #         the pod logs). true → a failing run fails the install/upgrade.
+  failOnError: false
+  readinessTimeout: 180
+  controllerId: sanity-controller
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi

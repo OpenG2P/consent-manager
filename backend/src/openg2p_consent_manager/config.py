@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     cm_signing_private_key_pem: str = ""
     cm_signing_kid: str = "cm-2025-01"
     cm_signing_algorithm: str = "EdDSA"  # fallback hint only; key type wins
+    # Set true by the Helm chart in demo mode so the service warns loudly that it
+    # is signing with the public bundled demo key (must be replaced for production).
+    cm_signing_is_demo: bool = False
 
     # NOTE: the data controller / module is a per-partner attribute
     # (Partner.controller_id), set at onboarding — one shared CM serves many

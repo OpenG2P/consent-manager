@@ -1,0 +1,60 @@
+{{- if .Values.sanity.enabled -}}
+{{- $s := .Values.sanity -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-sanity
+  labels: {{- include "common.labels.standard" (dict "customLabels" .Values.commonLabels "context" $) | nindent 4 }}
+    app.kubernetes.io/component: sanity
+  annotations:
+    # Runs automatically on every install/upgrade — i.e. each time you click
+    # Install / Upgrade / Redeploy in Rancher. No CLI needed.
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    # Keep the finished pod around so its logs stay viewable; replaced next run.
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels: {{- include "common.labels.matchLabels" (dict "customLabels" .Values.podLabels "context" $) | nindent 8 }}
+        app.kubernetes.io/component: sanity
+    spec:
+      restartPolicy: Never
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: sanity
+          image: "{{ $s.image.repository }}:{{ $s.image.tag }}"
+          imagePullPolicy: {{ $s.image.pullPolicy }}
+          resources: {{- toYaml $s.resources | nindent 12 }}
+          env:
+            - name: SANITY_BASE_URL
+              value: {{ tpl $s.baseUrl $ | quote }}
+            - name: SANITY_VERIFY_TLS
+              value: {{ $s.verifyTls | quote }}
+            - name: SANITY_RUN_E2E
+              value: {{ $s.runE2e | quote }}
+            # When false, the Job exits 0 even if tests fail, so a sanity failure
+            # never fails the install/upgrade. Read the pod logs for results.
+            - name: SANITY_FAIL_ON_ERROR
+              value: {{ $s.failOnError | quote }}
+            - name: SANITY_READINESS_TIMEOUT
+              value: {{ $s.readinessTimeout | quote }}
+            - name: SANITY_CONTROLLER_ID
+              value: {{ $s.controllerId | quote }}
+            - name: SANITY_AUTH_ENABLED
+              value: {{ .Values.global.consentManagerAuthEnabled | quote }}
+            # e2e (runE2e) needs a client-credentials token with the admin role.
+            - name: SANITY_TOKEN_URL
+              value: "{{ tpl .Values.global.keycloakIssuerUrl $ }}/protocol/openid-connect/token"
+            - name: SANITY_CLIENT_ID
+              value: {{ tpl .Values.global.consentManagerAuthClientId $ | quote }}
+            - name: SANITY_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ tpl .Values.global.consentManagerAuthClientId $ }}
+                  key: client_secret
+                  optional: true
+{{- end }}
