@@ -98,7 +98,10 @@ consentManagerApi:
     minReplicas: 1
     maxReplicas: 10
     targetCPUUtilizationPercentage: 80
-    targetMemoryUtilizationPercentage: 80
+    # Memory-based autoscaling is intentionally OFF: a Python process's memory
+    # baseline can exceed the request and never shrink, which makes a memory HPA
+    # scale up to maxReplicas and stay there. Autoscale on CPU only.
+    targetMemoryUtilizationPercentage: null
 
   updateStrategy:
     type: RollingUpdate
