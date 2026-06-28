@@ -6,6 +6,7 @@ from .canonical import (
     iso_duration_to_timedelta,
     sha256_hex,
 )
+from .jwks import jwk_to_pem_and_alg
 
 __all__ = [
     "TTLCache",
@@ -14,4 +15,5 @@ __all__ = [
     "b64url_encode",
     "b64url_decode",
     "iso_duration_to_timedelta",
+    "jwk_to_pem_and_alg",
 ]

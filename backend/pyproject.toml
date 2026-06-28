@@ -23,6 +23,7 @@ dependencies = [
   "psycopg2-binary",
   "cryptography >=42.0.0",
   "pyjwt >=2.8.0",
+  "httpx",
 ]
 dynamic = ["version"]
 

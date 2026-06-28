@@ -81,7 +81,7 @@ class VerificationService(BaseService):
             {k: v for k, v in raw_consent_object.items() if k != "signature"}
         )
         if not self.crypto.verify(
-            key.public_key, obj.signature.algorithm, signing_input, obj.signature.value
+            key["public_key"], obj.signature.algorithm, signing_input, obj.signature.value
         ):
             return await self._deny(
                 ReasonCode.signature_invalid, "signature did not verify",

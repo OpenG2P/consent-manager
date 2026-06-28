@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     partner_cache_ttl_sec: int = 60
     partner_cache_enabled: bool = True
 
+    # Timeout (seconds) for polling a partner's JWKS endpoint (Partner.jwks_url),
+    # the optional second source of verifying keys alongside DB-stored keys.
+    partner_jwks_timeout_sec: int = 5
+
     # ── Caller authentication (Keycloak / OIDC bearer) ──────────────────────
     # Validates bearer tokens on protected endpoints against the Keycloak JWKS,
     # exactly like the AWE service. When auth_enabled is false (dev), tokens are

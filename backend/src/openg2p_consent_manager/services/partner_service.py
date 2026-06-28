@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
+import httpx
 from openg2p_fastapi_common.service import BaseService
 from sqlalchemy import func, select
 
@@ -15,7 +16,7 @@ from ..models import (
     PartnerStatus,
     PolicyStatus,
 )
-from ..utils import TTLCache
+from ..utils import TTLCache, jwk_to_pem_and_alg
 
 _config = Settings.get_config()
 _logger = logging.getLogger(_config.logging_default_logger_name)
@@ -161,10 +162,17 @@ class PartnerService(BaseService):
     # ── Hot path: cached verification material ───────────────────────────────
 
     async def get_verification_material(self, audience: str) -> Optional[dict]:
-        """Return the active partner, its active keys, and active policy by
+        """Return the active partner, its verifying keys, and active policy by
         audience — cached per pod for the validation hot path.
 
-        Shape: {"partner": Partner, "keys": {kid: PartnerKey}, "policy": PartnerPolicy}
+        Keys come from two sources, merged by ``kid``:
+          1. PartnerKey rows stored in the DB (CM-managed onboarding).
+          2. The partner's own JWKS endpoint (``jwks_url``), polled and parsed,
+             so partners can self-manage rotation. DB keys take precedence.
+
+        Shape: {"partner": Partner,
+                "keys": {kid: {"public_key": pem, "algorithm": alg, "source": ...}},
+                "policy": PartnerPolicy}
         Returns None if the partner is unknown or suspended.
         """
         if _config.partner_cache_enabled:
@@ -189,7 +197,14 @@ class PartnerService(BaseService):
                     PartnerKey.status == KeyStatus.active.value,
                 )
             )
-            keys = {k.kid: k for k in keys_result.scalars().all()}
+            keys = {
+                k.kid: {
+                    "public_key": k.public_key,
+                    "algorithm": k.algorithm,
+                    "source": "db",
+                }
+                for k in keys_result.scalars().all()
+            }
 
             policy_result = await session.execute(
                 select(PartnerPolicy).where(
@@ -198,11 +213,47 @@ class PartnerService(BaseService):
                 )
             )
             policy = policy_result.scalars().first()
+            jwks_url = partner.jwks_url
+
+        # Fetch JWKS outside the DB session so we don't hold a connection during
+        # the network call. DB-stored keys win on kid collision.
+        if jwks_url:
+            for kid, entry in (await self._fetch_jwks_keys(jwks_url)).items():
+                keys.setdefault(kid, entry)
 
         material = {"partner": partner, "keys": keys, "policy": policy}
         if _config.partner_cache_enabled:
             self._cache.set(audience, material)
         return material
+
+    async def _fetch_jwks_keys(self, jwks_url: str) -> dict:
+        """Poll a partner JWKS endpoint and parse it into {kid: {public_key, algorithm}}.
+
+        Best-effort: on any network/parse failure, logs a warning and returns the
+        keys parsed so far (possibly empty) so verification degrades to whatever
+        DB keys exist rather than erroring the whole request.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=_config.partner_jwks_timeout_sec) as client:
+                resp = await client.get(jwks_url)
+                resp.raise_for_status()
+                document = resp.json()
+        except Exception as exc:
+            _logger.warning("Failed to fetch partner JWKS from %s: %s", jwks_url, exc)
+            return {}
+
+        keys: dict = {}
+        for jwk in document.get("keys", []):
+            kid = jwk.get("kid")
+            if not kid:
+                continue
+            try:
+                pem, alg = jwk_to_pem_and_alg(jwk)
+            except Exception as exc:
+                _logger.warning("Skipping unusable JWK (kid=%s) from %s: %s", kid, jwks_url, exc)
+                continue
+            keys[kid] = {"public_key": pem, "algorithm": alg, "source": "jwks"}
+        return keys
 
     def _invalidate(self, audience: Optional[str]) -> None:
         if audience:
