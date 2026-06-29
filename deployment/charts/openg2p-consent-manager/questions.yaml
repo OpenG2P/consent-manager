@@ -148,17 +148,18 @@ questions:
 
 # ----------------------------- Sanity -------------------------------
 # If sanity runs, it GATES the deploy: a failure fails the install/upgrade (the
-# Job is a Helm hook). Turn it off for production where you don't want it.
+# Job is a Helm hook). The default smoke+contract level creates no data and is
+# safe everywhere — leave it on.
 - variable: sanity.enabled
-  description: Run sanity tests on every install/upgrade and GATE on them — a failure fails the deploy (visible in Rancher). Turn off for production where you don't want test runs (e.g. to avoid the e2e creating data). Results are in the Job pod's logs.
+  description: Run the smoke + contract sanity tests on every install/upgrade and GATE on them (a failure fails the deploy). They create no data and are safe in every environment, so keep this ON. Only break-glass case to turn it off — the sanity IMAGE itself can't run (e.g. it wasn't mirrored / a bad build), which would block the deploy at the pod level (the report-only flag can't rescue that). Results are in the Job pod's logs.
   type: boolean
   default: true
   label: Run Sanity Tests (gates the deploy)
   group: Sanity
 - variable: sanity.runE2e
-  description: "Also run the full end-to-end /validate round-trip (onboards a TEST_SANITY partner, then suspends it). Off = smoke + contract only, which create no data — safe for production."
+  description: "Run the full end-to-end /validate round-trip too (on by default). It is the ONLY part that creates data — onboards a TEST_SANITY partner (then suspends it) and needs a Keycloak token at deploy time. Turn OFF for production where you don't want test data; smoke + contract still run and gate."
   type: boolean
-  default: false
-  label: Run Full E2E
+  default: true
+  label: Run Full E2E (creates a test partner)
   group: Sanity
   show_if: sanity.enabled=true

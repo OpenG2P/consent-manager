@@ -271,8 +271,11 @@ consentManagerApi:
 # A Helm post-install/post-upgrade Job that runs the sanity tests against the
 # freshly deployed service. Because it is a Helm hook, a failed Job fails the
 # whole release — so if sanity runs, the deploy is only "successful" when it
-# passes. For production where you don't want it (e.g. to avoid the e2e creating
-# data), set enabled=false. Default: enabled, smoke+contract only (no data), gating.
+# passes. The default smoke+contract level creates NO data and is safe in every
+# environment, so keep it on. Disable is a BREAK-GLASS only for when the sanity
+# IMAGE itself can't run (not mirrored / bad build) and is blocking the deploy at
+# the pod level — failOnError can't rescue that, since the container never starts.
+# (Data is created only by the e2e, which is its own opt-in.)
 sanity:
   enabled: true
   image:
@@ -283,9 +286,11 @@ sanity:
   # <release>-api on port 80.
   baseUrl: 'http://{{ .Release.Name }}-api'
   verifyTls: false
-  # false → smoke + contract only (creates no data, needs no token).
-  # true  → also the data-creating /validate round-trip (needs Keycloak token).
-  runE2e: false
+  # true (default) → also run the data-creating /validate round-trip (onboards a
+  #   TEST_SANITY partner then suspends it; needs a Keycloak token at deploy time).
+  # false → smoke + contract only (creates no data, needs no token). Set this for
+  #   production where you don't want test data created.
+  runE2e: true
   # GATE the deploy on sanity. true (default) → a failing run fails the Job and
   # therefore the install/upgrade. ADVANCED escape hatch: set false for
   # report-only (Job exits 0 on failure, deploy succeeds; read the pod logs).
