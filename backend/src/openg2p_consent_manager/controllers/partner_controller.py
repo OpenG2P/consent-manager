@@ -27,6 +27,17 @@ _NOT_FOUND = JSONResponse(status_code=404, content={"error": "not_found"})
 class PartnerController(BaseController):
     """Administrative partner onboarding, key, and policy management."""
 
+    # TODO(partner-delete): add a SOFT delete for partners (audit-safe).
+    #   A partner is referenced by ConsentArtefact / ConsentReceipt / ConsentRequest
+    #   / DecisionLog / AuditLog, so it must NEVER be hard-deleted — that would
+    #   orphan the audit trail and break non-repudiation. Plan:
+    #     1. Add an `archived` value to PartnerStatus (alongside active/suspended);
+    #        like suspended it fails validation (validate filters status==active).
+    #     2. Add DELETE /partners/{id} that does a SOFT delete: set status=archived,
+    #        keep the row, return 200.
+    #     3. Switch the sanity e2e cleanup from PATCH suspended -> DELETE (archived).
+    #   Until then, "delete" = PATCH /partners/{id} {status: "suspended"}.
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.partners = PartnerService.get_component()

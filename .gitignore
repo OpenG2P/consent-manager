@@ -8,7 +8,6 @@
 *.pem
 *.key
 secrets/
-frontend/
 
 # ─── Python (backend) ──────────────────────────────────────────────────────
 __pycache__/
