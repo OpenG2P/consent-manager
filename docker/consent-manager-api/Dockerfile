@@ -25,9 +25,11 @@ ENV CONSENT_MANAGER_APP_HOST=0.0.0.0
 ENV CONSENT_MANAGER_APP_PORT=8000
 ENV CONSENT_MANAGER_NO_OF_WORKERS=4
 
-# Run migrations once, then serve. Multiple replicas may run migrate concurrently;
-# create_migrate() is idempotent (CREATE TABLE IF NOT EXISTS).
-CMD python3 -m openg2p_consent_manager.main migrate; \
+# Run migrations, then serve. `&&` (not `;`) so a FAILED migrate crashes the pod
+# and Kubernetes retries — never serve against a half-created / empty schema.
+# create_migrate() is idempotent (CREATE TABLE IF NOT EXISTS), so concurrent
+# replicas are safe.
+CMD python3 -m openg2p_consent_manager.main migrate && \
     gunicorn "openg2p_consent_manager.main:app" \
       --workers ${CONSENT_MANAGER_NO_OF_WORKERS} \
       --worker-class uvicorn.workers.UvicornWorker \

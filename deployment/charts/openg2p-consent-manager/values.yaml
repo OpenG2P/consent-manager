@@ -267,7 +267,11 @@ consentManagerApi:
       - 'sh'
     args:
       - '-c'
-      - 'until pg_isready -U ${CONSENT_MANAGER_DB_USERNAME} -h ${CONSENT_MANAGER_DB_HOSTNAME} -p ${CONSENT_MANAGER_DB_PORT:-5432} -d ${CONSENT_MANAGER_DB_DBNAME:-consent_manager_db}; do sleep 3; done'
+      # Wait until we can actually AUTHENTICATE as the app role — not just until
+      # the server accepts connections (pg_isready). This prevents migrate from
+      # running before postgres-init has provisioned the role/password, which
+      # otherwise fails auth and leaves an empty schema.
+      - 'until PGPASSWORD="${CONSENT_MANAGER_DB_PASSWORD}" psql -h "${CONSENT_MANAGER_DB_HOSTNAME}" -p "${CONSENT_MANAGER_DB_PORT:-5432}" -U "${CONSENT_MANAGER_DB_USERNAME}" -d "${CONSENT_MANAGER_DB_DBNAME:-consent_manager_db}" -c "select 1" >/dev/null 2>&1; do echo "waiting for db auth..."; sleep 3; done'
     containerSecurityContext:
       enabled: false
 

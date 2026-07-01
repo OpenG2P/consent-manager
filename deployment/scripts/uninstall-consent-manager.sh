@@ -87,6 +87,10 @@ done
 RELEASE_UNDERSCORED="${RELEASE//-/_}"
 CONSENT_DB="${RELEASE_UNDERSCORED}"
 CONSENT_USER="${RELEASE_UNDERSCORED}_user"
+# postgres-init's DB password Secret (global.consentDBSecret = '<release>-db').
+# Deleting it AND the role together keeps a reinstall's Secret/role passwords in
+# sync — otherwise a surviving Secret + dropped role => auth failure next install.
+DB_SECRET="${RELEASE}-db"
 
 # ---------- helpers ----------
 _red()   { printf "\033[31m%s\033[0m\n" "$*"; }
@@ -224,6 +228,10 @@ _blue "==> [3/6] Sweep leftover Secrets / ConfigMaps"
 if [[ "$NAMESPACE_EXISTS" == true ]]; then
   run "kubectl -n '$NAMESPACE' delete secret    -l 'app.kubernetes.io/instance=$RELEASE' --ignore-not-found"
   run "kubectl -n '$NAMESPACE' delete configmap -l 'app.kubernetes.io/instance=$RELEASE' --ignore-not-found"
+  # Explicitly drop the DB password Secret by name (the label sweep may miss it,
+  # depending on how postgres-init labels it). Must go together with the role
+  # drop in step 4 so a reinstall's Secret and role passwords match.
+  run "kubectl -n '$NAMESPACE' delete secret '$DB_SECRET' --ignore-not-found"
   if [[ "$DROP_SIGNING_SECRET" == true ]]; then
     run "kubectl -n '$NAMESPACE' delete secret '$SIGNING_SECRET' --ignore-not-found"
   fi
