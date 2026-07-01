@@ -46,10 +46,16 @@ class Partner(BaseORMModelWithId):
 
 
 class PartnerKey(BaseORMModelWithId):
-    """A public key used to verify a partner's signed consent objects."""
+    """A public key used to verify a partner's signed consent objects.
 
-    __tablename__ = "partner_keys"
-    __table_args__ = (UniqueConstraint("partner_id", "kid", name="uq_partner_kid"),)
+    NB: table is ``cm_partner_keys`` — not ``partner_keys`` — because
+    openg2p-fastapi-common (>= develop) ships its own ``PartnerKey`` mapped to
+    ``partner_keys`` for its local-crypto backend. CM keeps its own richer model
+    (Path B), so it uses a distinct table to avoid a MetaData table collision.
+    """
+
+    __tablename__ = "cm_partner_keys"
+    __table_args__ = (UniqueConstraint("partner_id", "kid", name="uq_cm_partner_kid"),)
 
     partner_id: Mapped[str] = mapped_column(String, index=True)
     kid: Mapped[str] = mapped_column(String(255), index=True)
