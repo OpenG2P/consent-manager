@@ -14,7 +14,7 @@ on:
     inputs:
       fastapi_common_ref:
         description: "openg2p-fastapi-common git ref (tag/branch)"
-        default: "1.1"
+        default: "develop"
         type: string
 
 jobs:
@@ -61,7 +61,7 @@ jobs:
           push: true
           platforms: linux/amd64
           build-args: |
-            FASTAPI_COMMON_REF=${{ inputs.fastapi_common_ref || '1.1' }}
+            FASTAPI_COMMON_REF=${{ inputs.fastapi_common_ref || 'develop' }}
           tags: ${{ matrix.image }}:${{ steps.meta.outputs.tag }}
           labels: |
             org.opencontainers.image.created=${{ steps.meta.outputs.created }}
