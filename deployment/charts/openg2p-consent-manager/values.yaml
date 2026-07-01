@@ -183,6 +183,10 @@ consentManagerApi:
     enabled: true
     schedule: "*/15 * * * *"
     backoffLimit: 1
+    # Auto-clean finished Jobs so they don't accumulate in Rancher/kubectl.
+    ttlSecondsAfterFinished: 600
+    successfulJobsHistoryLimit: 1
+    failedJobsHistoryLimit: 1
 
   envVars:
     CONSENT_MANAGER_DB_HOSTNAME: '{{ .Values.global.postgresqlHost }}'

@@ -10,9 +10,14 @@ metadata:
 spec:
   schedule: {{ .Values.expiryCronjob.schedule | quote }}
   concurrencyPolicy: Forbid
+  # Don't let finished Jobs pile up in the UI.
+  successfulJobsHistoryLimit: {{ .Values.expiryCronjob.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.expiryCronjob.failedJobsHistoryLimit }}
   jobTemplate:
     spec:
       backoffLimit: {{ .Values.expiryCronjob.backoffLimit }}
+      # Auto-delete each finished Job (and its pod) after this many seconds.
+      ttlSecondsAfterFinished: {{ .Values.expiryCronjob.ttlSecondsAfterFinished }}
       template:
         metadata:
           labels: {{- include "common.labels.standard" (dict "customLabels" .Values.podLabels "context" $) | nindent 12 }}
@@ -26,5 +31,22 @@ spec:
               imagePullPolicy: {{ .Values.image.pullPolicy }}
               command: ["python3", "-m", "openg2p_consent_manager.expire"]
               env: {{- include "consentManagerApi.envVars" . | nindent 16 }}
+              {{- if .Values.signingKey.enabled }}
+              # Mount the signing key so the shared CM_SIGNING_P12_PATH resolves
+              # (the expire job never signs, but the app loads the key at boot).
+              volumeMounts:
+                - name: signing-key
+                  mountPath: {{ .Values.signingKey.mountPath }}
+                  readOnly: true
+              {{- end }}
+          {{- if .Values.signingKey.enabled }}
+          volumes:
+            - name: signing-key
+              secret:
+                secretName: {{ .Values.signingKey.secretName }}
+                items:
+                  - key: {{ .Values.signingKey.secretKey }}
+                    path: {{ .Values.signingKey.secretKey }}
+          {{- end }}
 {{- end }}
 {{- end -}}
