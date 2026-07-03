@@ -57,23 +57,7 @@ spec:
                   name: {{ tpl .Values.global.consentManagerAuthClientId $ }}
                   key: client_secret
                   optional: true
-            # e2e signs a real consent object → needs a matching partner+key in
-            # Partner Management. The seed checks the PM fetch API and, if needed,
-            # onboards a persistent test partner via the PM admin API. The signing
-            # private key is bundled in the sanity image (TEST ONLY); PM stores the
-            # derived public half.
-            - name: SANITY_PM_PARTNER_API_URL
-              value: {{ tpl .Values.global.partnerManagementApiUrl $ | quote }}
-            - name: SANITY_PM_ADMIN_URL
-              value: {{ tpl .Values.global.partnerManagementAdminApiUrl $ | quote }}
-            - name: SANITY_PM_ADMIN_TOKEN_URL
-              value: "{{ tpl .Values.global.keycloakIssuerUrl $ }}/protocol/openid-connect/token"
-            - name: SANITY_PM_ADMIN_CLIENT_ID
-              value: {{ tpl .Values.global.partnerManagementAdminClientId $ | quote }}
-            - name: SANITY_PM_ADMIN_CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ tpl .Values.global.partnerManagementAdminClientId $ }}
-                  key: client_secret
-                  optional: true
+            # Partner Management seed env — the e2e's idempotent safety-net check
+            # (the dedicated pm-seed Job already seeds before this runs).
+            {{- include "consentManagerSanity.pmSeedEnv" . | nindent 12 }}
 {{- end }}

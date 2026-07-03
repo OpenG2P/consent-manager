@@ -137,3 +137,28 @@ def ensure_seeded(cfg) -> str:
             "not servable by PM's fetch API"
         )
     return outcome
+
+
+def main() -> int:
+    """CLI entrypoint (`python -m sanity.pm_seed`) — used by the deploy-time seed
+    Job. Idempotent: safe to run on every install/upgrade. Exits 0 on success or
+    a benign skip (PM not configured); non-zero only on an unexpected failure."""
+    from sanity.config import Config
+
+    cfg = Config.from_env()
+    if not cfg.can_reach_pm:
+        print("[pm-seed] SANITY_PM_PARTNER_API_URL not set — nothing to seed; skipping")
+        return 0
+    try:
+        status = ensure_seeded(cfg)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[pm-seed] FAILED to seed partner '{cfg.pm_partner_id}': {exc}")
+        return 1
+    print(f"[pm-seed] partner '{cfg.pm_partner_id}' key '{cfg.pm_kid}': {status}")
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(main())

@@ -310,10 +310,12 @@ sanity:
   # <release>-api on port 80.
   baseUrl: 'http://{{ .Release.Name }}-api'
   verifyTls: false
-  # true (default) → also run the data-creating /validate round-trip (onboards a
-  #   TEST_SANITY partner then suspends it; needs a Keycloak token at deploy time).
-  # false → smoke + contract only (creates no data, needs no token). Set this for
-  #   production where you don't want test data created.
+  # true (default) → also run the signed /validate round-trip. This deploys a
+  #   pm-seed Job first that ensures a persistent test partner + key exists in
+  #   Partner Management (via PM's admin API), then the e2e signs against it.
+  #   Needs a Keycloak token + reachable PM at deploy time.
+  # false → smoke + contract only (seeds nothing, creates no data, needs no
+  #   token). Set this for production where you don't want test data created.
   runE2e: true
   # GATE the deploy on sanity. true (default) → a failing run fails the Job and
   # therefore the install/upgrade. ADVANCED escape hatch: set false for
