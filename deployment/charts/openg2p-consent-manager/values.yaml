@@ -27,12 +27,10 @@ global:
   # disabled and verification fails closed (no keys → deny).
   partnerManagementApiUrl: http://partner-management-partner-api
   # PM's admin (staff-portal) API — used ONLY by the sanity e2e to seed a
-  # persistent test partner. Not used by the running service.
+  # persistent test partner. Not used by the running service. The seed calls it
+  # with the consent-manager client token (SANITY_CLIENT_*), which must be
+  # granted the `partner_manager` role in the staff realm.
   partnerManagementAdminApiUrl: http://partner-management-staff-portal-api
-  # Keycloak client (client-credentials, role partner_manager) the sanity seed
-  # uses to call the PM admin API. A Secret of this name with key client_secret
-  # is read if present; absent => PM auth assumed disabled.
-  partnerManagementAdminClientId: partner-management
 
   # The data controller / module is a per-partner attribute set at onboarding —
   # one shared CM serves many modules, so there is no global controller setting.
@@ -101,6 +99,13 @@ keycloak-init:
           clientRoleMappings:
             consent-manager:
               - CONSENT_MANAGER_ADMIN
+            # To let the sanity e2e seed its test partner in Partner Management,
+            # this service account also needs PM's `partner_manager` role. Uncomment
+            # ONLY when Partner Management is already installed in this realm (the
+            # `partner-management` client + role must exist first, or this init job
+            # fails). Otherwise grant it manually in Keycloak.
+            # partner-management:
+            #   - partner_manager
 
 consentManagerApi:
   enabled: true

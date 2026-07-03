@@ -40,7 +40,7 @@ spec:
           command: ["sh", "-c", "python -m sanity.pm_seed || echo '[pm-seed] non-fatal error; continuing deploy'"]
           env:
             {{- include "consentManagerSanity.pmSeedEnv" . | nindent 12 }}
-            # Fallback PM-admin credentials: the consent-manager client (must hold
-            # the partner_manager role) when no dedicated SANITY_PM_ADMIN_* is set.
+            # PM-admin credentials: the consent-manager client, which must hold
+            # the partner_manager role in the staff realm.
             {{- include "consentManagerSanity.kcClientEnv" . | nindent 12 }}
 {{- end }}
