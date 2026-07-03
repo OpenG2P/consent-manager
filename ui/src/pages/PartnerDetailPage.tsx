@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
-import type { PolicyUpsert } from "../api/types";
+import type { PartnerPolicy, PolicyUpsert } from "../api/types";
 
 export default function PartnerDetailPage() {
   const { id = "" } = useParams();
@@ -11,7 +11,7 @@ export default function PartnerDetailPage() {
 
   if (partner.isLoading) return <div className="loading">Loading…</div>;
   if (partner.error || !partner.data)
-    return <div className="notice notice-error">Partner not found.</div>;
+    return <div className="notice notice-error">Binding not found.</div>;
 
   const p = partner.data;
 
@@ -20,22 +20,28 @@ export default function PartnerDetailPage() {
       <div className="spread">
         <div>
           <Link to="/partners" className="muted">
-            ← Partners
+            ← Partner policies
           </Link>
-          <h1 style={{ marginTop: 8 }}>{p.name}</h1>
+          <h1 style={{ marginTop: 8 }}>{p.name || p.partner_mgmt_id || p.audience}</h1>
         </div>
         <span className={`badge badge-${p.status}`}>{p.status}</span>
       </div>
 
-      <ApprovalCard partnerId={id} />
-
       <div className="card">
-        <h3 className="card-title">Details</h3>
+        <h3 className="card-title">Binding</h3>
         <table className="data">
           <tbody>
             <tr>
-              <th style={{ width: 200 }}>Organisation</th>
-              <td>{p.org_name}</td>
+              <th style={{ width: 220 }}>Partner Management ID</th>
+              <td>
+                {p.partner_mgmt_id ? (
+                  <code className="mono">{p.partner_mgmt_id}</code>
+                ) : (
+                  <span className="muted">
+                    — using audience (<code className="mono">{p.audience}</code>) —
+                  </span>
+                )}
+              </td>
             </tr>
             <tr>
               <th>Controller</th>
@@ -49,18 +55,6 @@ export default function PartnerDetailPage() {
                 <code className="mono">{p.audience}</code>
               </td>
             </tr>
-            <tr>
-              <th>Partner Management ID</th>
-              <td>
-                {p.partner_mgmt_id ? (
-                  <code className="mono">{p.partner_mgmt_id}</code>
-                ) : (
-                  <span className="muted">
-                    — using audience (<code className="mono">{p.audience}</code>) —
-                  </span>
-                )}
-              </td>
-            </tr>
           </tbody>
         </table>
       </div>
@@ -71,57 +65,19 @@ export default function PartnerDetailPage() {
         signed consent objects. Rotate or revoke keys there.
       </div>
 
-      <PolicyCard partnerId={id} />
+      <PolicySection partnerId={id} />
     </div>
   );
 }
 
-// ── Approval status (read-only; approvals happen in the workflow engine) ──
-function ApprovalCard({ partnerId }: { partnerId: string }) {
-  const { data } = useQuery({ queryKey: ["partner", partnerId], queryFn: () => api.getPartner(partnerId) });
-  const status = data?.approval_status;
-  if (!status || status === "not_required") return null;
-  const ref = data?.awe_request_id;
-
-  const map: Record<string, { cls: string; label: string; text: string }> = {
-    pending: {
-      cls: "notice-info",
-      label: "In review",
-      text: "This partner is awaiting approval in the workflow engine. It cannot validate consents until approved.",
-    },
-    approved: {
-      cls: "notice-info",
-      label: "Approved",
-      text: "Onboarding was approved. The partner is active.",
-    },
-    rejected: {
-      cls: "notice-error",
-      label: "Rejected",
-      text: "The onboarding request was rejected in the workflow engine.",
-    },
-  };
-  const m = map[status] ?? map.pending;
-  return (
-    <div className={`notice ${m.cls}`}>
-      <strong>Approval: {m.label}.</strong> {m.text}
-      {ref && (
-        <>
-          {" "}
-          <span className="muted">AWE request: </span>
-          <code className="mono">{ref}</code>
-        </>
-      )}
-    </div>
-  );
-}
-
-// ── Policy ────────────────────────────────────────────────────────────
-function PolicyCard({ partnerId }: { partnerId: string }) {
+// ── Policy (versioned; a widening version awaits AWE approval) ────────────
+function PolicySection({ partnerId }: { partnerId: string }) {
   const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
-  const policy = useQuery({
-    queryKey: ["policy", partnerId],
-    queryFn: () => api.getPolicy(partnerId),
+
+  const versions = useQuery({
+    queryKey: ["policies", partnerId],
+    queryFn: () => api.listPolicies(partnerId),
     retry: false,
   });
 
@@ -129,68 +85,130 @@ function PolicyCard({ partnerId }: { partnerId: string }) {
     mutationFn: (data: PolicyUpsert) => api.putPolicy(partnerId, data),
     onSuccess: () => {
       setEditing(false);
-      qc.invalidateQueries({ queryKey: ["policy", partnerId] });
-      qc.invalidateQueries({ queryKey: ["partner", partnerId] });
+      qc.invalidateQueries({ queryKey: ["policies", partnerId] });
     },
   });
 
-  const existing = policy.data;
+  const list = versions.data ?? [];
+  const active = list.find((p) => p.status === "active");
+  const pending = list.find((p) => p.status === "pending");
 
-  if (editing || (!existing && !policy.isLoading)) {
+  // Show the form when editing, or when there is nothing to display yet.
+  if (editing || (list.length === 0 && !versions.isLoading)) {
     return (
       <PolicyForm
-        initial={existing}
+        initial={active}
         pending={save.isPending}
         error={save.error instanceof ApiError ? save.error.message : undefined}
-        onCancel={existing ? () => setEditing(false) : undefined}
+        onCancel={list.length > 0 ? () => setEditing(false) : undefined}
         onSave={(data) => save.mutate(data)}
       />
     );
   }
 
   return (
-    <div className="card">
-      <div className="spread">
-        <h3 className="card-title" style={{ margin: 0 }}>
-          Policy {existing?.version != null && <span className="muted">v{existing.version}</span>}
-        </h3>
-        {existing && (
+    <div>
+      {pending && (
+        <div className="notice notice-pending">
+          <strong>Policy v{pending.version} is awaiting approval.</strong> It widens access, so it
+          will only take effect once approvers sign off. The active policy below stays in force
+          until then.
+          {pending.awe_request_id && (
+            <>
+              {" "}
+              <span className="muted">AWE request:</span>{" "}
+              <code className="mono">{pending.awe_request_id}</code>
+            </>
+          )}
+        </div>
+      )}
+
+      <div className="card">
+        <div className="spread">
+          <h3 className="card-title" style={{ margin: 0 }}>
+            Active policy{" "}
+            {active ? (
+              <span className="muted">v{active.version}</span>
+            ) : (
+              <span className="muted">— none —</span>
+            )}
+          </h3>
           <button className="btn-secondary" onClick={() => setEditing(true)}>
-            Edit policy
+            {active ? "Edit policy" : "Define policy"}
           </button>
+        </div>
+
+        {versions.isLoading && <p className="loading">Loading policy…</p>}
+
+        {active ? (
+          <table className="data">
+            <tbody>
+              <PolicyRow label="Allowed data scopes" values={active.allowed_data_scopes} />
+              <PolicyRow label="Allowed purposes" values={active.allowed_purposes} />
+              <PolicyRow label="Allowed subject ID types" values={active.allowed_subject_id_types} />
+              <PolicyRow label="Allowed signing algs" values={active.allowed_signing_algs} />
+              <tr>
+                <th style={{ width: 220 }}>Max validity</th>
+                <td>{humaniseDuration(active.max_validity_duration)}</td>
+              </tr>
+              <tr>
+                <th>Fetch type</th>
+                <td>{active.fetch_type}</td>
+              </tr>
+              {active.fetch_type === "periodic" && (
+                <tr>
+                  <th>Min interval between fetches</th>
+                  <td>{humaniseDuration(active.max_fetch_frequency)}</td>
+                </tr>
+              )}
+              <tr>
+                <th>Data life</th>
+                <td>{humaniseDuration(active.data_life)}</td>
+              </tr>
+            </tbody>
+          </table>
+        ) : (
+          !versions.isLoading && (
+            <p className="muted">
+              No active policy — this binding denies everything until a policy is defined.
+            </p>
+          )
         )}
       </div>
 
-      {policy.isLoading && <p className="loading">Loading policy…</p>}
+      {list.length > 0 && <VersionHistory versions={list} />}
+    </div>
+  );
+}
 
-      {existing && (
-        <table className="data">
-          <tbody>
-            <PolicyRow label="Allowed data scopes" values={existing.allowed_data_scopes} />
-            <PolicyRow label="Allowed purposes" values={existing.allowed_purposes} />
-            <PolicyRow label="Allowed subject ID types" values={existing.allowed_subject_id_types} />
-            <PolicyRow label="Allowed signing algs" values={existing.allowed_signing_algs} />
-            <tr>
-              <th style={{ width: 220 }}>Max validity</th>
-              <td>{humaniseDuration(existing.max_validity_duration)}</td>
+function VersionHistory({ versions }: { versions: PartnerPolicy[] }) {
+  return (
+    <div className="card">
+      <h3 className="card-title">Version history</h3>
+      <table className="data">
+        <thead>
+          <tr>
+            <th>Version</th>
+            <th>Status</th>
+            <th>Scopes</th>
+            <th>Effective from</th>
+          </tr>
+        </thead>
+        <tbody>
+          {versions.map((v) => (
+            <tr key={v.id}>
+              <td>v{v.version}</td>
+              <td>
+                <span className={`badge badge-${v.status}`}>{v.status}</span>
+              </td>
+              <td className="muted">{v.allowed_data_scopes.length} scope(s)</td>
+              <td className="muted">
+                {v.effective_from ? new Date(v.effective_from).toLocaleString() : "—"}
+              </td>
             </tr>
-            <tr>
-              <th>Fetch type</th>
-              <td>{existing.fetch_type}</td>
-            </tr>
-            {existing.fetch_type === "periodic" && (
-              <tr>
-                <th>Max fetch frequency</th>
-                <td>{humaniseDuration(existing.max_fetch_frequency)}</td>
-              </tr>
-            )}
-            <tr>
-              <th>Data life</th>
-              <td>{humaniseDuration(existing.data_life)}</td>
-            </tr>
-          </tbody>
-        </table>
-      )}
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

@@ -1,16 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
-import type { Partner } from "../api/types";
 
-function StatusBadge({ partner }: { partner: Partner }) {
-  // Show approval state when onboarding is still in review, else lifecycle state.
-  const approval = partner.approval_status;
-  if (approval === "pending") return <span className="badge badge-pending">In review</span>;
-  if (approval === "rejected") return <span className="badge badge-rejected">Rejected</span>;
-  return <span className={`badge badge-${partner.status}`}>{partner.status}</span>;
-}
-
+// Bindings list — each row binds a Partner-Management partner to a controller
+// and a data-share policy. Identity/keys live in Partner Management.
 export default function PartnersPage() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["partners"],
@@ -20,23 +13,24 @@ export default function PartnersPage() {
   return (
     <div>
       <div className="spread">
-        <h1>Partners</h1>
+        <h1>Partner policies</h1>
         <Link to="/partners/new" className="btn-primary">
-          Onboard partner
+          New binding
         </Link>
       </div>
 
       <p className="muted" style={{ marginTop: -8, marginBottom: 24 }}>
-        Registered data consumers. Each partner is bound to a signing key, an audience, and a
-        policy that constrains what data they may ever receive.
+        Each binding ties a Partner-Management partner to a data controller and a
+        versioned data-share policy — the ceiling on what that partner may ever receive.
+        Partner identity and signing keys are managed in Partner Management.
       </p>
 
-      {isLoading && <div className="loading">Loading partners…</div>}
-      {error && <div className="notice notice-error">Could not load partners.</div>}
+      {isLoading && <div className="loading">Loading…</div>}
+      {error && <div className="notice notice-error">Could not load bindings.</div>}
 
       {data && data.length === 0 && (
         <div className="card">
-          No partners yet. <Link to="/partners/new">Onboard your first partner</Link> to begin.
+          No bindings yet. <Link to="/partners/new">Create your first binding</Link> to define a policy.
         </div>
       )}
 
@@ -44,8 +38,8 @@ export default function PartnersPage() {
         <table className="data">
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Organisation</th>
+              <th>Label</th>
+              <th>Partner (PM)</th>
               <th>Controller</th>
               <th>Audience</th>
               <th>Status</th>
@@ -55,9 +49,11 @@ export default function PartnersPage() {
             {data.map((p) => (
               <tr key={p.id}>
                 <td>
-                  <Link to={`/partners/${p.id}`}>{p.name}</Link>
+                  <Link to={`/partners/${p.id}`}>{p.name || "—"}</Link>
                 </td>
-                <td>{p.org_name}</td>
+                <td>
+                  <code className="mono">{p.partner_mgmt_id || p.audience}</code>
+                </td>
                 <td>
                   <code className="mono">{p.controller_id}</code>
                 </td>
@@ -65,7 +61,7 @@ export default function PartnersPage() {
                   <code className="mono">{p.audience}</code>
                 </td>
                 <td>
-                  <StatusBadge partner={p} />
+                  <span className={`badge badge-${p.status}`}>{p.status}</span>
                 </td>
               </tr>
             ))}

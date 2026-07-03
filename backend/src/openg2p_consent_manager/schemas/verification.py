@@ -46,6 +46,20 @@ class ValidateRequest(BaseModel):
     request_context: Optional[RequestContext] = None
 
 
+class DecisionLogResponse(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: str
+    partner_id: Optional[str] = None
+    consent_id: Optional[str] = None
+    object_jti: Optional[str] = None
+    decision: str
+    reason_code: str
+    detail: Optional[str] = None
+    policy_version: Optional[int] = None
+    created_at: datetime
+
+
 class Decision(BaseModel):
     decision: str  # permit | deny
     reason_code: ReasonCode

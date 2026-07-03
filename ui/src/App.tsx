@@ -3,6 +3,8 @@ import Layout from "./components/Layout";
 import PartnersPage from "./pages/PartnersPage";
 import PartnerOnboardPage from "./pages/PartnerOnboardPage";
 import PartnerDetailPage from "./pages/PartnerDetailPage";
+import ApprovalsPage from "./pages/ApprovalsPage";
+import DecisionsPage from "./pages/DecisionsPage";
 import MyConsentsPage from "./pages/MyConsentsPage";
 import ConsentRequestPage from "./pages/ConsentRequestPage";
 
@@ -18,6 +20,8 @@ export default function App() {
         <Route path="/partners" element={<PartnersPage />} />
         <Route path="/partners/new" element={<PartnerOnboardPage />} />
         <Route path="/partners/:id" element={<PartnerDetailPage />} />
+        <Route path="/approvals" element={<ApprovalsPage />} />
+        <Route path="/decisions" element={<DecisionsPage />} />
         <Route path="/my/consents" element={<MyConsentsPage />} />
         <Route path="*" element={<Navigate to="/partners" replace />} />
       </Route>

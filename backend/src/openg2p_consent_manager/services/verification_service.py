@@ -127,6 +127,24 @@ class VerificationService(BaseService):
 
     # ── helpers ──────────────────────────────────────────────────────────────
 
+    async def list_decisions(
+        self,
+        partner_id: Optional[str] = None,
+        decision: Optional[str] = None,
+        limit: int = 50,
+    ) -> list:
+        """Recent validation decisions (append-only log), newest first — for the
+        admin console's operational/audit status view."""
+        async with async_session()() as session:
+            query = select(DecisionLog)
+            if partner_id:
+                query = query.where(DecisionLog.partner_id == partner_id)
+            if decision:
+                query = query.where(DecisionLog.decision == decision)
+            query = query.order_by(DecisionLog.created_at.desc()).limit(min(limit, 200))
+            result = await session.execute(query)
+            return list(result.scalars().all())
+
     async def _existing_artefact(self, jti: str) -> Optional[ConsentArtefact]:
         async with async_session()() as session:
             result = await session.execute(

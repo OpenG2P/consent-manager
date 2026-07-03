@@ -1,15 +1,16 @@
 import logging
 from datetime import datetime, timezone
+from typing import Optional
 
-from fastapi import Body, Depends
+from fastapi import Body, Depends, Query
 from fastapi.responses import JSONResponse
 from openg2p_fastapi_common.controller import BaseController
 from pydantic import ValidationError
 
-from ..auth import current_identity
+from ..auth import current_identity, require_role
 from ..config import Settings
 from ..schemas.common import ReasonCode, StatusResponse
-from ..schemas.verification import Decision, ValidateRequest
+from ..schemas.verification import Decision, DecisionLogResponse, ValidateRequest
 from ..services import ConsentService, VerificationService
 
 _config = Settings.get_config()
@@ -41,6 +42,12 @@ class VerificationController(BaseController):
         self.router.add_api_route(
             "/receipts/{receipt_id}", self.get_receipt, methods=["GET"],
         )
+        # Recent decisions — admin status/audit view for the console.
+        self.router.add_api_route(
+            "/decisions", self.list_decisions,
+            dependencies=[Depends(require_role(_config.auth_admin_role))],
+            responses={200: {"model": list[DecisionLogResponse]}}, methods=["GET"],
+        )
 
     async def validate(self, payload: dict = Body(...)) -> Decision:
         # Parse defensively so a malformed object is a clean deny, not a 422.
@@ -67,3 +74,14 @@ class VerificationController(BaseController):
         if receipt is None:
             return JSONResponse(status_code=404, content={"error": "not_found"})
         return JSONResponse(content=receipt.document)
+
+    async def list_decisions(
+        self,
+        partner_id: Optional[str] = Query(None),
+        decision: Optional[str] = Query(None),
+        limit: int = Query(50, ge=1, le=200),
+    ):
+        rows = await self.verification.list_decisions(
+            partner_id=partner_id, decision=decision, limit=limit
+        )
+        return [DecisionLogResponse.model_validate(r) for r in rows]

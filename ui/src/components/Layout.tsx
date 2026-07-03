@@ -1,9 +1,12 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { currentUser, isAdmin, isDevMode, logout } from "../auth";
+import { currentUser, isAdmin, isApprover, isDevMode, logout } from "../auth";
 import "./Layout.css";
+
+const navClass = ({ isActive }: { isActive: boolean }) => (isActive ? "active" : "");
 
 export default function Layout() {
   const admin = isAdmin();
+  const approver = isApprover();
   return (
     <div className="layout">
       <header className="topbar">
@@ -13,11 +16,21 @@ export default function Layout() {
         </div>
         <nav className="topnav">
           {admin && (
-            <NavLink to="/partners" className={({ isActive }) => (isActive ? "active" : "")}>
-              Partners
+            <NavLink to="/partners" className={navClass}>
+              Partner policies
             </NavLink>
           )}
-          <NavLink to="/my/consents" className={({ isActive }) => (isActive ? "active" : "")}>
+          {approver && (
+            <NavLink to="/approvals" className={navClass}>
+              Approvals
+            </NavLink>
+          )}
+          {admin && (
+            <NavLink to="/decisions" className={navClass}>
+              Decisions
+            </NavLink>
+          )}
+          <NavLink to="/my/consents" className={navClass}>
             My Consents
           </NavLink>
         </nav>

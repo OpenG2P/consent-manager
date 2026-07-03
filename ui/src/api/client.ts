@@ -5,7 +5,10 @@
 import { getConfig, getToken, refreshToken } from "../auth";
 import type {
   Artefact,
+  AweTask,
   ConsentRequest,
+  DecisionLog,
+  PagedTasks,
   Paginated,
   Partner,
   PartnerCreate,
@@ -58,10 +61,38 @@ export const api = {
   updatePartner: (id: string, data: PartnerUpdate) =>
     request<Partner>(`${V1}/partners/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
 
-  // Policy
+  // Policy (versioned). putPolicy returns the new version — `pending` if it
+  // widened access and AWE approval is enabled, else `active`.
   getPolicy: (id: string) => request<PartnerPolicy>(`${V1}/partners/${id}/policy`),
+  listPolicies: (id: string) => request<PartnerPolicy[]>(`${V1}/partners/${id}/policies`),
   putPolicy: (id: string, data: PolicyUpsert) =>
     request<PartnerPolicy>(`${V1}/partners/${id}/policy`, { method: "PUT", body: JSON.stringify(data) }),
+
+  // ── Decisions (admin status/audit view) ────────────────────────────
+  listDecisions: (params: { partner_id?: string; decision?: string; limit?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (params.partner_id) q.set("partner_id", params.partner_id);
+    if (params.decision) q.set("decision", params.decision);
+    q.set("limit", String(params.limit ?? 50));
+    return request<DecisionLog[]>(`${V1}/decisions?${q.toString()}`);
+  },
+
+  // ── AWE approvals (approver inbox — proxied to AWE with the approver JWT) ──
+  listMyTasks: (params: { status?: string; page?: number; page_size?: number } = {}) => {
+    const q = new URLSearchParams();
+    q.set("status", params.status ?? "open");
+    q.set("page", String(params.page ?? 1));
+    q.set("page_size", String(params.page_size ?? 25));
+    return request<PagedTasks>(`${V1}/awe/tasks?${q.toString()}`);
+  },
+  submitTaskDecision: (taskId: string, action: "approve" | "reject" | "abstain", comment?: string) =>
+    request<unknown>(`${V1}/awe/tasks/${taskId}/decision`, {
+      method: "POST",
+      body: JSON.stringify({ action, comment: comment ?? null }),
+    }),
+  claimTask: (taskId: string) =>
+    request<AweTask>(`${V1}/awe/tasks/${taskId}/claim`, { method: "POST" }),
+  getAweRequest: (requestId: string) => request<unknown>(`${V1}/awe/requests/${requestId}`),
 
   // ── Subject rights (transparency dashboard) ────────────────────────
   myConsents: (status?: string) =>

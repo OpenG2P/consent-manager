@@ -9,6 +9,7 @@ export interface AppConfig {
   apiBaseUrl: string;
   keycloak: { url: string; realm: string; clientId: string };
   adminRole: string;
+  approverRole: string;
 }
 
 let config: AppConfig;
@@ -26,14 +27,14 @@ export async function loadConfig(): Promise<AppConfig> {
 }
 
 // Unsigned JWT (dev only) — never trusted by the backend when Keycloak is set.
-function makeDevToken(role: string): string {
+function makeDevToken(roles: string[]): string {
   const header = { alg: "none", typ: "JWT" };
   const now = Math.floor(Date.now() / 1000);
   const payload = {
     sub: "dev-admin",
     preferred_username: "dev-admin",
     name: "Dev Admin",
-    realm_access: { roles: [role] },
+    realm_access: { roles },
     iat: now,
     exp: now + 60 * 60 * 8,
   };
@@ -61,8 +62,13 @@ export async function initAuth(): Promise<void> {
 }
 
 export function getToken(): string {
-  if (devMode) return makeDevToken(config.adminRole);
+  if (devMode) return makeDevToken(devRoles());
   return keycloak?.token ?? "";
+}
+
+// In dev mode we grant both admin + approver so every surface is reachable.
+function devRoles(): string[] {
+  return [config.adminRole, config.approverRole].filter(Boolean);
 }
 
 export async function refreshToken(): Promise<void> {
@@ -77,7 +83,7 @@ export async function refreshToken(): Promise<void> {
 // Roles pulled from both realm_access and every resource_access.* client,
 // matching how the backend resolves them.
 export function getRoles(): string[] {
-  if (devMode) return [config.adminRole];
+  if (devMode) return devRoles();
   if (!keycloak?.tokenParsed) return [];
   const parsed = keycloak.tokenParsed as {
     realm_access?: { roles?: string[] };
@@ -96,6 +102,10 @@ export function hasRole(role: string): boolean {
 
 export function isAdmin(): boolean {
   return hasRole(config.adminRole);
+}
+
+export function isApprover(): boolean {
+  return hasRole(config.approverRole);
 }
 
 export function currentUser(): string {

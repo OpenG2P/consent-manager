@@ -3,42 +3,37 @@
 
 export type PartnerStatus = "active" | "suspended";
 
-// Approval fields are populated once partner-onboarding is wired to the shared
-// Approval Workflow Engine. They are optional so the UI degrades gracefully
-// against a backend that does not yet emit them.
-export type ApprovalStatus = "not_required" | "pending" | "approved" | "rejected";
-
+// A "partner" in CM is a POLICY BINDING: it binds a Partner-Management partner
+// (partner_mgmt_id) to a controller + data-share policy. Identity/keys live in
+// PM; `name` here is just a display label.
 export interface Partner {
   id: string;
-  name: string;
-  org_name: string;
+  name?: string | null;
   audience: string;
   controller_id: string;
-  // Reference used to fetch this partner's keys from Partner Management (PM).
-  // Signing keys live in PM, not CM. Falls back to `audience` when unset.
   partner_mgmt_id?: string | null;
   status: PartnerStatus;
   created_at?: string;
-  approval_status?: ApprovalStatus;
-  awe_request_id?: string | null;
 }
 
 export interface PartnerCreate {
-  name: string;
-  org_name: string;
+  partner_mgmt_id?: string | null;
   audience: string;
   controller_id: string;
-  partner_mgmt_id?: string | null;
+  name?: string | null;
 }
 
 export interface PartnerUpdate {
   name?: string;
-  org_name?: string;
   status?: PartnerStatus;
   partner_mgmt_id?: string | null;
 }
 
 export type FetchType = "oneshot" | "periodic";
+
+// A versioned data-share policy's lifecycle: `pending` awaits AWE approval;
+// `active` is in force; `superseded`/`rejected` are historical.
+export type PolicyStatus = "pending" | "active" | "superseded" | "rejected";
 
 // Durations are ISO-8601 duration strings (e.g. "P1Y", "P30D", "PT12H"),
 // matching the backend. max_fetch_frequency is likewise a string (e.g. "P1D").
@@ -57,8 +52,45 @@ export interface PartnerPolicy extends PolicyUpsert {
   id: string;
   partner_id: string;
   version: number;
-  status: string;
+  status: PolicyStatus;
+  awe_request_id?: string | null;
   effective_from?: string | null;
+}
+
+// ── AWE approval tasks (approver inbox — proxied to AWE) ──────────────────
+export interface AweTask {
+  id: string;
+  request_id: string;
+  stage_order: number;
+  assignee: string;
+  status: string; // open | claimed | completed | ...
+  artifact_type?: string | null;
+  artifact_id?: string | null;
+  policy_key?: string | null;
+  context?: Record<string, unknown> | null;
+  created_at: string;
+  due_at?: string | null;
+}
+
+export interface PagedTasks {
+  items: AweTask[];
+  total: number;
+  page: number;
+  page_size: number;
+  pages: number;
+}
+
+// ── Decision log (admin status/audit view) ───────────────────────────────
+export interface DecisionLog {
+  id: string;
+  partner_id?: string | null;
+  consent_id?: string | null;
+  object_jti?: string | null;
+  decision: "permit" | "deny";
+  reason_code: string;
+  detail?: string | null;
+  policy_version?: number | null;
+  created_at: string;
 }
 
 // ── Subject rights (transparency dashboard) ──────────────────────────────
