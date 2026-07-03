@@ -27,6 +27,24 @@ against the root context ($).
 {{- end -}}
 
 {{/*
+Sanity Keycloak client-credentials env (the consent-manager admin client). Used
+for CM admin calls and as the fallback token for PM admin seeding when no
+dedicated partner_manager client is configured.
+*/}}
+{{- define "consentManagerSanity.kcClientEnv" -}}
+- name: SANITY_TOKEN_URL
+  value: "{{ tpl .Values.global.keycloakIssuerUrl $ }}/protocol/openid-connect/token"
+- name: SANITY_CLIENT_ID
+  value: {{ tpl .Values.global.consentManagerAuthClientId $ | quote }}
+- name: SANITY_CLIENT_SECRET
+  valueFrom:
+    secretKeyRef:
+      name: {{ tpl .Values.global.consentManagerAuthClientId $ }}
+      key: client_secret
+      optional: true
+{{- end -}}
+
+{{/*
 Partner Management seed env — shared by the pm-seed Job (deploy-time seeding)
 and the sanity Job (its idempotent safety-net check). The signing private key
 is bundled in the sanity image (TEST only); PM stores the derived public half.

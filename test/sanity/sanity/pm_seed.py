@@ -46,14 +46,29 @@ def key_servable(cfg) -> bool:
 
 
 def _admin_token(cfg):
-    if not (cfg.pm_admin_token_url and cfg.pm_admin_client_secret):
-        return None  # PM auth disabled
+    """Obtain a client-credentials token for PM's admin API.
+
+    Prefers dedicated PM admin creds (SANITY_PM_ADMIN_*); otherwise falls back to
+    the sanity Keycloak client (SANITY_TOKEN_URL/CLIENT_ID/CLIENT_SECRET) — that
+    client must then be granted the `partner_manager` role in the staff realm.
+    Returns None only when no credentials are configured at all (PM auth off).
+    """
+    if cfg.pm_admin_token_url and cfg.pm_admin_client_secret:
+        token_url, client_id, client_secret = (
+            cfg.pm_admin_token_url, cfg.pm_admin_client_id, cfg.pm_admin_client_secret,
+        )
+    elif cfg.token_url and cfg.client_secret:
+        token_url, client_id, client_secret = (
+            cfg.token_url, cfg.client_id, cfg.client_secret,
+        )
+    else:
+        return None
     r = httpx.post(
-        cfg.pm_admin_token_url,
+        token_url,
         data={
             "grant_type": "client_credentials",
-            "client_id": cfg.pm_admin_client_id,
-            "client_secret": cfg.pm_admin_client_secret,
+            "client_id": client_id,
+            "client_secret": client_secret,
         },
         verify=cfg.verify_tls,
         timeout=20,
@@ -117,6 +132,14 @@ def ensure_seeded(cfg) -> str:
             json={"partner_id": cfg.pm_partner_id, "keys": [key_input]},
             verify=cfg.verify_tls,
             timeout=30,
+        )
+    if r.status_code in (401, 403):
+        raise RuntimeError(
+            f"PM admin API rejected the seed ({r.status_code}) at {r.request.url}. "
+            f"The seed needs a Keycloak client with the 'partner_manager' role "
+            f"(token_sent={token is not None}). Either set SANITY_PM_ADMIN_* to a "
+            f"dedicated partner_manager client, or grant the sanity client "
+            f"'{cfg.client_id}' the partner_manager role in the staff realm."
         )
     r.raise_for_status()
     request_id = r.json()["id"]
