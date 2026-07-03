@@ -40,12 +40,16 @@ global:
   partnerManagementAdminApiUrl: http://partner-management-staff-portal-api
 
   # ── Approval Workflow Engine (AWE) — data-share policy approvals ────────
-  # CM gates policy WIDENING behind the shared, per-environment AWE. It calls
-  # AWE's API at aweBaseUrl with a service token (the consent-manager client),
-  # and registers its own per-caller callback secret into the shared AWE DB (the
-  # awe-callback-seed Job) so AWE can HMAC-sign the terminal webhooks CM verifies.
-  # Approvers act in CM's own UI (CM proxies AWE task/decision calls).
-  aweEnabled: true
+  # OPTIONAL add-on (OFF by default). When ON, CM gates policy WIDENING behind the
+  # shared AWE: a widening creates a `pending` policy version that only activates
+  # once approvers sign off. CM is fully usable with this OFF — policy changes just
+  # take effect immediately (still admin-only). Turning it ON requires AWE-side
+  # setup that is NOT auto-provisioned: (1) an AWE approval POLICY registered for
+  # `awePolicyChangePolicyKey` (create + activate via AWE admin — see the
+  # approval-workflow-integration doc), (2) approver users/roles, (3) the
+  # consent-manager client trusted by AWE's issuer. CM auto-handles only the
+  # callback secret (awe-callback-seed Job) + the callback URL.
+  aweEnabled: false
   aweHostname: 'awe.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
   aweBaseUrl: 'https://{{ tpl .Values.global.aweHostname $ }}'
   aweHttpTimeoutSeconds: 30
