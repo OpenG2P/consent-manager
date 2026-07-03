@@ -129,6 +129,17 @@ keycloak-init:
             # Required to act on AWE policy-approval tasks via CM's inbox.
             # Grant to approver users (see users[] mappings below).
             - CONSENT_MANAGER_APPROVER
+        # PUBLIC browser client for the admin console SPA (login via Keycloak).
+        # No secret; roles come from the logged-in user's assignments. Served on
+        # the same host as the staff API, so redirect back there.
+        - clientId: consent-manager-ui
+          name: OpenG2P Consent Manager Console
+          publicClient: true
+          standardFlowEnabled: true
+          redirectUris:
+            - 'https://{{ tpl .Values.global.consentManagerHostname $ }}/*'
+          webOrigins:
+            - 'https://{{ tpl .Values.global.consentManagerHostname $ }}'
       users:
         # First-install operator can administer partners/policies AND act on
         # policy-approval tasks from the UI/CLI.
@@ -155,6 +166,67 @@ keycloak-init:
             # remove/adjust this mapping (a missing client fails this init job).
             partner-management-staff-portal:
               - partner_manager
+
+# Admin console SPA (React → nginx), served on the SAME host as the staff API
+# (a single VirtualService routes /consent/ → staff API, / → this UI). Runtime
+# config.json (Keycloak URL/realm/clientId, roles) is injected via a ConfigMap.
+ui:
+  enabled: true
+  nameOverride: ui
+  hostname: '{{ tpl .Values.global.consentManagerHostname $ }}'
+  replicaCount: 1
+  updateStrategy:
+    type: RollingUpdate
+  autoscaling:
+    enabled: false
+  serviceAccount:
+    create: false
+    name: ""
+  image:
+    registry: docker.io
+    repository: openg2p/openg2p-consent-manager-ui
+    tag: develop
+    pullPolicy: Always
+  containerPort: 8080
+  podSecurityContext:
+    enabled: false
+    fsGroup: 101          # nginx-unprivileged user
+  containerSecurityContext:
+    enabled: false
+    runAsUser: 101
+    runAsNonRoot: true
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+  service:
+    type: ClusterIP
+    port: 80
+  startupProbe:
+    enabled: true
+    httpGet:
+      path: /
+      port: http
+    periodSeconds: 5
+    failureThreshold: 10
+  livenessProbe:
+    enabled: true
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 30
+  readinessProbe:
+    enabled: true
+    httpGet:
+      path: /
+      port: http
+    periodSeconds: 10
+  # Client id of the PUBLIC browser client provisioned in keycloak-init above.
+  clientId: consent-manager-ui
 
 # Additional API-audience deployments in THIS chart (same image, separate
 # Deployment/Service/VirtualService). Each entry is merged OVER consentManagerApi,

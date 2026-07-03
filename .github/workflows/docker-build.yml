@@ -28,9 +28,17 @@ jobs:
           - name: consent-manager-api
             image: openg2p/openg2p-consent-manager
             dockerfile: docker/consent-manager-api/Dockerfile
+            context: .
           - name: consent-manager-sanity
             image: openg2p/openg2p-consent-manager-sanity
             dockerfile: docker/consent-manager-sanity/Dockerfile
+            context: .
+          # Admin console SPA (React → nginx). Its Dockerfile expects the ui/
+          # directory as the build context.
+          - name: consent-manager-ui
+            image: openg2p/openg2p-consent-manager-ui
+            dockerfile: ui/Dockerfile
+            context: ui
     steps:
       - uses: actions/checkout@v4
 
@@ -56,7 +64,7 @@ jobs:
       - name: Build and push - ${{ matrix.name }}
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           push: true
           platforms: linux/amd64

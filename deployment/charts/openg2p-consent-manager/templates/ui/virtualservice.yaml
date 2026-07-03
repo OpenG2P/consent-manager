@@ -1,0 +1,57 @@
+{{- /*
+Single VirtualService for the staff host — serves the admin console SPA and its
+API on one origin (no CORS). Two ordered routes (Istio matches in declaration
+order, so the more-specific API prefix must come first):
+
+  1. /consent/  → staff API Service   (the console's admin/approvals/decisions)
+  2. /          → UI Service          (the SPA, catch-all)
+
+Because this VS owns the staff host, the staff API's own VirtualService is
+suppressed while the UI is enabled (see templates/api/virtualservice.yaml).
+*/ -}}
+{{- if and .Values.ui.enabled .Values.consentManagerApi.istio.enabled .Values.consentManagerApi.istio.virtualservice.enabled }}
+{{- $host := tpl .Values.ui.hostname $ }}
+{{- $gateway := .Values.consentManagerApi.istio.virtualservice.gateway }}
+{{- $apiCtx := dict "Values" (merge (deepCopy .Values.consentManagerApi) (dict "global" .Values.global)) "Chart" .Chart "Release" .Release "Files" .Files "Capabilities" .Capabilities -}}
+{{- $apiName := include "common.names.fullname" $apiCtx -}}
+{{- $apiPort := .Values.consentManagerApi.service.port -}}
+{{- $uiCtx := dict "Values" (merge (deepCopy .Values.ui) (dict "global" .Values.global)) "Chart" .Chart "Release" .Release "Files" .Files "Capabilities" .Capabilities -}}
+{{- $uiName := include "common.names.fullname" $uiCtx -}}
+{{- $uiPort := .Values.ui.service.port -}}
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: {{ .Release.Name }}-console
+  labels: {{- include "common.labels.standard" (dict "customLabels" .Values.commonLabels "context" .) | nindent 4 }}
+spec:
+  hosts:
+    - {{ $host | quote }}
+  gateways:
+    - {{ $gateway }}
+  http:
+    # ----- Staff API: /consent/* (served at the app root, no rewrite) -----
+    - name: staff-api
+      match:
+        - uri:
+            prefix: /consent/
+      headers:
+        request:
+          set:
+            x-forwarded-host: {{ $host | quote }}
+            x-forwarded-proto: https
+      route:
+        - destination:
+            host: {{ $apiName }}
+            port:
+              number: {{ $apiPort }}
+    # ----- UI: everything else (SPA catch-all) -----
+    - name: ui
+      match:
+        - uri:
+            prefix: /
+      route:
+        - destination:
+            host: {{ $uiName }}
+            port:
+              number: {{ $uiPort }}
+{{- end }}

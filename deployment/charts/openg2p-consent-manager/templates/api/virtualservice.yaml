@@ -1,3 +1,8 @@
+{{- /* When the admin console UI is enabled it owns the staff host via a single
+     combined VirtualService (templates/ui/virtualservice.yaml: /consent/ → this
+     API, / → UI). Suppress this standalone API VS in that case to avoid two
+     VirtualServices racing on the same host. */ -}}
+{{- if not .Values.ui.enabled }}
 {{- $values := .Values.consentManagerApi -}}
 {{- $context := dict "Values" (merge (deepCopy $values) (dict "global" .Values.global)) "Chart" .Chart "Release" .Release "Files" .Files "Capabilities" .Capabilities -}}
 {{- with $context -}}
@@ -34,3 +39,4 @@ spec:
 {{- end }}
 {{- end }}
 {{- end -}}
+{{- end }}
