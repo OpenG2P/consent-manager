@@ -139,13 +139,18 @@ keycloak-init:
           clientRoleMappings:
             consent-manager:
               - CONSENT_MANAGER_ADMIN
-            # To let the sanity e2e seed its test partner in Partner Management,
-            # this service account also needs PM's `partner_manager` role. Uncomment
-            # ONLY when Partner Management is already installed in this realm (the
-            # `partner-management` client + role must exist first, or this init job
-            # fails). Otherwise grant it manually in Keycloak.
-            # partner-management:
-            #   - partner_manager
+            # PM's admin API requires the `partner_manager` role — a CLIENT role on
+            # PM's `partner-management-staff-portal` client (PM checks that client's
+            # roles). Granting it here lets this service account seed the sanity
+            # test partner in PM (and drive any partner-onboarding automation).
+            #
+            # REQUIRES Partner Management already installed in this realm (its
+            # keycloak-init creates that client + role first — CM depends on PM for
+            # partner keys anyway, so PM-first is expected). If you install CM
+            # WITHOUT PM, or your PM release name is not `partner-management`,
+            # remove/adjust this mapping (a missing client fails this init job).
+            partner-management-staff-portal:
+              - partner_manager
 
 # Additional API-audience deployments in THIS chart (same image, separate
 # Deployment/Service/VirtualService). Each entry is merged OVER consentManagerApi,
