@@ -1,0 +1,86 @@
+{{- /*
+Registers CM's per-caller callback secret into the shared AWE database so AWE
+can HMAC-sign the terminal webhooks CM verifies. Upserts one row into AWE's
+`callback_secret` table (id=<aweCallbackSecretId>, secret_hash=<minted HMAC>).
+A plain psql Job — no bespoke seed image needed. Idempotent (ON CONFLICT).
+Runs as a post-install/upgrade hook, early (weight -5), after the AWE DB is up.
+*/ -}}
+{{- if .Values.global.aweEnabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-awe-callback-seed
+  labels: {{- include "common.labels.standard" (dict "customLabels" .Values.commonLabels "context" $) | nindent 4 }}
+    app.kubernetes.io/component: awe-callback-seed
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels: {{- include "common.labels.matchLabels" (dict "customLabels" .Values.podLabels "context" $) | nindent 8 }}
+        app.kubernetes.io/component: awe-callback-seed
+    spec:
+      restartPolicy: OnFailure
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: awe-callback-seed
+          image: jbergknoff/postgresql-client:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: AWE_PGHOST
+              value: {{ .Values.global.postgresqlHost | quote }}
+            - name: AWE_PGPORT
+              value: {{ .Values.global.aweDBPort | default 5432 | quote }}
+            - name: AWE_PGDATABASE
+              value: {{ tpl .Values.global.aweDB $ | quote }}
+            - name: AWE_PGUSER
+              value: {{ tpl .Values.global.aweDBUser $ | quote }}
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ tpl .Values.global.aweDBSecret $ | quote }}
+                  key: {{ tpl .Values.global.aweDBUserPasswordKey $ | quote }}
+            - name: CB_ID
+              value: {{ tpl .Values.global.aweCallbackSecretId $ | quote }}
+            - name: CALLER
+              value: {{ .Release.Name | quote }}
+            - name: CB_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ tpl .Values.global.aweCallbackHmacSecretName $ | quote }}
+                  key: {{ .Values.global.aweCallbackHmacSecretKey | quote }}
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              echo "Waiting for AWE database ${AWE_PGDATABASE}@${AWE_PGHOST}:${AWE_PGPORT}..."
+              until pg_isready -h "$AWE_PGHOST" -p "$AWE_PGPORT" -U "$AWE_PGUSER" -d "$AWE_PGDATABASE" >/dev/null 2>&1; do
+                echo "  waiting for AWE db..."; sleep 3
+              done
+              # Wait for AWE to have created its schema (callback_secret table).
+              until psql -h "$AWE_PGHOST" -p "$AWE_PGPORT" -U "$AWE_PGUSER" -d "$AWE_PGDATABASE" \
+                    -tAc "SELECT to_regclass('public.callback_secret')" | grep -q callback_secret; do
+                echo "  waiting for AWE callback_secret table..."; sleep 3
+              done
+              echo "Registering callback secret '${CB_ID}' for caller '${CALLER}'..."
+              psql -h "$AWE_PGHOST" -p "$AWE_PGPORT" -U "$AWE_PGUSER" -d "$AWE_PGDATABASE" -v ON_ERROR_STOP=1 \
+                -v id="$CB_ID" -v caller="$CALLER" -v secret="$CB_SECRET" <<'SQL'
+              INSERT INTO callback_secret (id, caller_service, secret_hash, status, created_at, updated_at)
+              VALUES (:'id', :'caller', :'secret', 'active', now(), now())
+              ON CONFLICT (id) DO UPDATE
+                SET secret_hash = EXCLUDED.secret_hash, status = 'active', updated_at = now();
+              SQL
+              echo "Done."
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+{{- end }}

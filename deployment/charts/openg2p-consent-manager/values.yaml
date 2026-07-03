@@ -34,6 +34,34 @@ global:
   # granted the `partner_manager` role in the staff realm.
   partnerManagementAdminApiUrl: http://partner-management-staff-portal-api
 
+  # ── Approval Workflow Engine (AWE) — data-share policy approvals ────────
+  # CM gates policy WIDENING behind the shared, per-environment AWE. It calls
+  # AWE's API at aweBaseUrl with a service token (the consent-manager client),
+  # and registers its own per-caller callback secret into the shared AWE DB (the
+  # awe-callback-seed Job) so AWE can HMAC-sign the terminal webhooks CM verifies.
+  # Approvers act in CM's own UI (CM proxies AWE task/decision calls).
+  aweEnabled: true
+  aweHostname: 'awe.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
+  aweBaseUrl: 'https://{{ tpl .Values.global.aweHostname $ }}'
+  aweHttpTimeoutSeconds: 30
+  # AWE *approval* policy (workflow) key governing data-share policy changes.
+  awePolicyChangePolicyKey: consent-manager.policy_change.v1
+  aweWebhookMaxSkewSeconds: 300
+  # Per-caller callback secret: a unique id + a minted HMAC secret. The
+  # awe-callback-seed Job inserts the row into AWE's callback_secret table; CM
+  # holds the same raw secret to verify inbound webhook signatures.
+  aweCallbackSecretId: '{{ .Release.Name }}'
+  aweCallbackHmacSecretName: '{{ .Release.Name }}-awe-callback-hmac'
+  aweCallbackHmacSecretKey: hmac-secret
+  # Shared AWE Postgres (exposed by commons-services) — the seed Job writes here.
+  aweDB: awe
+  aweDBPort: 5432
+  aweDBUser: awe_user
+  aweDBSecret: awe-db-user
+  aweDBUserPasswordKey: awe-db-user-password
+  # Helm release hosting the shared AWE — its Service is <aweReleaseName>-awe.
+  aweReleaseName: commons-services
+
   # The data controller / module is a per-partner attribute set at onboarding —
   # one shared CM serves many modules, so there is no global controller setting.
 
@@ -228,6 +256,18 @@ consentManagerApi:
     CONSENT_MANAGER_AUTH_APPROVER_ROLE: '{{ tpl .Values.global.consentManagerApproverRole $ }}'
     # Partner Management key API — source of partner signing keys.
     CONSENT_MANAGER_PARTNER_MGMT_API_URL: '{{ tpl .Values.global.partnerManagementApiUrl $ }}'
+    # ── AWE (data-share policy approvals) ──────────────────────────────────
+    CONSENT_MANAGER_AWE_ENABLED: '{{ .Values.global.aweEnabled }}'
+    CONSENT_MANAGER_AWE_BASE_URL: '{{ tpl .Values.global.aweBaseUrl $ }}'
+    CONSENT_MANAGER_AWE_HTTP_TIMEOUT_SECONDS: '{{ .Values.global.aweHttpTimeoutSeconds }}'
+    CONSENT_MANAGER_AWE_POLICY_CHANGE_POLICY_KEY: '{{ tpl .Values.global.awePolicyChangePolicyKey $ }}'
+    CONSENT_MANAGER_AWE_WEBHOOK_MAX_SKEW_SEC: '{{ .Values.global.aweWebhookMaxSkewSeconds }}'
+    # AWE posts terminal webhooks here (in-cluster; no ingress hop needed).
+    CONSENT_MANAGER_AWE_CALLBACK_URL: 'http://{{ .Release.Name }}-api/consent/v1/awe/webhooks/decision'
+    CONSENT_MANAGER_AWE_CALLBACK_SECRET_ID: '{{ tpl .Values.global.aweCallbackSecretId $ }}'
+    # CM→AWE service token via the consent-manager client (client-credentials).
+    CONSENT_MANAGER_AWE_TOKEN_URL: '{{ tpl .Values.global.keycloakIssuerUrl $ }}/protocol/openid-connect/token'
+    CONSENT_MANAGER_AWE_CLIENT_ID: '{{ tpl .Values.global.consentManagerAuthClientId $ }}'
     # In demo mode, force a distinctive kid so any receipt / JWKS makes it obvious
     # a demo (insecure) key is in use; otherwise use the configured kid.
     CONSENT_MANAGER_CM_SIGNING_KID: '{{ if eq .Values.signingKey.mode "demo" }}cm-demo-INSECURE{{ else }}{{ tpl .Values.global.consentSigningKid $ }}{{ end }}'
@@ -245,6 +285,19 @@ consentManagerApi:
       secretKeyRef:
         name: '{{ .Values.signingKey.passwordSecretName }}'
         key: '{{ .Values.signingKey.passwordSecretKey }}'
+        optional: true
+    # CM→AWE service-token secret (the consent-manager client secret).
+    CONSENT_MANAGER_AWE_CLIENT_SECRET:
+      secretKeyRef:
+        name: '{{ tpl .Values.global.consentManagerAuthClientId $ }}'
+        key: client_secret
+        optional: true
+    # Raw HMAC secret CM shares with AWE to verify inbound webhook signatures
+    # (must equal the callback_secret row seeded into AWE by awe-callback-seed).
+    CONSENT_MANAGER_AWE_CALLBACK_HMAC_SECRET:
+      secretKeyRef:
+        name: '{{ tpl .Values.global.aweCallbackHmacSecretName $ }}'
+        key: '{{ .Values.global.aweCallbackHmacSecretKey }}'
         optional: true
 
   resources:
