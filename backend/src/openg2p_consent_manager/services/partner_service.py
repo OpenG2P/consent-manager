@@ -2,21 +2,19 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-import httpx
 from openg2p_fastapi_common.service import BaseService
 from sqlalchemy import func, select
 
 from ..config import Settings
 from ..db import async_session
 from ..models import (
-    KeyStatus,
+    ApprovalStatus,
     Partner,
-    PartnerKey,
     PartnerPolicy,
     PartnerStatus,
     PolicyStatus,
 )
-from ..utils import TTLCache, jwk_to_pem_and_alg
+from ..utils import TTLCache
 
 _config = Settings.get_config()
 _logger = logging.getLogger(_config.logging_default_logger_name)
@@ -32,30 +30,95 @@ class PartnerService(BaseService):
     # ── Admin: partners ──────────────────────────────────────────────────────
 
     async def create_partner(self, data) -> Partner:
+        # When AWE onboarding approval is enabled, the partner is born suspended
+        # + pending — it must NOT validate consents until AWE approves. The
+        # verification hot path filters status==active, so keeping status
+        # suspended is what actually enforces the gate; approval_status carries
+        # the human-facing state. When AWE is disabled, onboarding is immediate.
+        gated = _config.awe_enabled
         async with async_session()() as session:
             partner = Partner(
                 name=data.name,
                 org_name=data.org_name,
                 audience=data.audience,
                 controller_id=data.controller_id,
-                jwks_url=data.jwks_url,
-                status=PartnerStatus.active.value,
+                partner_mgmt_id=data.partner_mgmt_id,
+                status=(
+                    PartnerStatus.suspended.value if gated else PartnerStatus.active.value
+                ),
+                approval_status=(
+                    ApprovalStatus.pending.value
+                    if gated
+                    else ApprovalStatus.not_required.value
+                ),
             )
             session.add(partner)
             await session.commit()
             await session.refresh(partner)
             return partner
 
+    async def set_awe_request_id(self, partner_id: str, awe_request_id: str) -> None:
+        """Record the AWE request correlating to a partner's onboarding."""
+        async with async_session()() as session:
+            partner = await session.get(Partner, partner_id)
+            if partner is not None:
+                partner.awe_request_id = awe_request_id
+                await session.commit()
+
+    async def apply_onboarding_decision(
+        self, awe_request_id: str, artifact_id: str, approved: bool
+    ) -> bool:
+        """Flip a partner's onboarding gate from a terminal AWE webhook. Matches
+        the partner by AWE request id (preferred) or the artifact id (== partner
+        id) as a fallback. Returns False if no partner correlates."""
+        async with async_session()() as session:
+            partner = None
+            if awe_request_id:
+                result = await session.execute(
+                    select(Partner).where(Partner.awe_request_id == awe_request_id)
+                )
+                partner = result.scalars().first()
+            if partner is None and artifact_id:
+                partner = await session.get(Partner, artifact_id)
+            if partner is None:
+                return False
+
+            if approved:
+                partner.status = PartnerStatus.active.value
+                partner.approval_status = ApprovalStatus.approved.value
+            else:
+                partner.status = PartnerStatus.suspended.value
+                partner.approval_status = ApprovalStatus.rejected.value
+            audience = partner.audience
+            await session.commit()
+        self._invalidate(audience)
+        return True
+
     async def get_partner(self, partner_id: str) -> Optional[Partner]:
         async with async_session()() as session:
             return await session.get(Partner, partner_id)
+
+    async def list_partners(
+        self, controller_id: Optional[str] = None, status: Optional[str] = None
+    ) -> list:
+        """List partners for the admin console, newest first. Optional filters by
+        controller (registry) and lifecycle status."""
+        async with async_session()() as session:
+            query = select(Partner)
+            if controller_id:
+                query = query.where(Partner.controller_id == controller_id)
+            if status:
+                query = query.where(Partner.status == status)
+            query = query.order_by(Partner.created_at.desc())
+            result = await session.execute(query)
+            return list(result.scalars().all())
 
     async def update_partner(self, partner_id: str, data) -> Optional[Partner]:
         async with async_session()() as session:
             partner = await session.get(Partner, partner_id)
             if partner is None:
                 return None
-            for field in ("name", "org_name", "status", "jwks_url"):
+            for field in ("name", "org_name", "status", "partner_mgmt_id"):
                 value = getattr(data, field, None)
                 if value is not None:
                     setattr(partner, field, value)
@@ -63,47 +126,6 @@ class PartnerService(BaseService):
             await session.refresh(partner)
         self._invalidate(partner.audience)
         return partner
-
-    # ── Admin: keys ──────────────────────────────────────────────────────────
-
-    async def add_key(self, partner_id: str, data) -> Optional[PartnerKey]:
-        async with async_session()() as session:
-            partner = await session.get(Partner, partner_id)
-            if partner is None:
-                return None
-            key = PartnerKey(
-                partner_id=partner_id,
-                kid=data.kid,
-                algorithm=data.algorithm,
-                public_key=data.public_key,
-                status=KeyStatus.active.value,
-                not_before=data.not_before,
-                not_after=data.not_after,
-            )
-            session.add(key)
-            await session.commit()
-            await session.refresh(key)
-            audience = partner.audience
-        self._invalidate(audience)
-        return key
-
-    async def revoke_key(self, partner_id: str, kid: str) -> bool:
-        async with async_session()() as session:
-            result = await session.execute(
-                select(PartnerKey).where(
-                    PartnerKey.partner_id == partner_id, PartnerKey.kid == kid
-                )
-            )
-            key = result.scalars().first()
-            if key is None:
-                return False
-            key.status = KeyStatus.revoked.value
-            partner = await session.get(Partner, partner_id)
-            audience = partner.audience if partner else None
-            await session.commit()
-        if audience:
-            self._invalidate(audience)
-        return True
 
     # ── Admin: policy (versioned) ────────────────────────────────────────────
 
@@ -162,18 +184,16 @@ class PartnerService(BaseService):
     # ── Hot path: cached verification material ───────────────────────────────
 
     async def get_verification_material(self, audience: str) -> Optional[dict]:
-        """Return the active partner, its verifying keys, and active policy by
-        audience — cached per pod for the validation hot path.
+        """Return the active partner and its active policy by audience — cached
+        per pod for the validation hot path.
 
-        Keys come from two sources, merged by ``kid``:
-          1. PartnerKey rows stored in the DB (CM-managed onboarding).
-          2. The partner's own JWKS endpoint (``jwks_url``), polled and parsed,
-             so partners can self-manage rotation. DB keys take precedence.
+        Partner public keys are NOT included here: they are owned by the Partner
+        Management service and fetched separately (and cached with their own
+        discipline) via PartnerMgmtKeyStore, keyed by the partner's
+        ``partner_mgmt_id``. This method only resolves the onboarded party +
+        policy. Returns None if the partner is unknown or suspended.
 
-        Shape: {"partner": Partner,
-                "keys": {kid: {"public_key": pem, "algorithm": alg, "source": ...}},
-                "policy": PartnerPolicy}
-        Returns None if the partner is unknown or suspended.
+        Shape: {"partner": Partner, "policy": PartnerPolicy | None}
         """
         if _config.partner_cache_enabled:
             cached = self._cache.get(audience)
@@ -191,21 +211,6 @@ class PartnerService(BaseService):
             if partner is None:
                 return None
 
-            keys_result = await session.execute(
-                select(PartnerKey).where(
-                    PartnerKey.partner_id == partner.id,
-                    PartnerKey.status == KeyStatus.active.value,
-                )
-            )
-            keys = {
-                k.kid: {
-                    "public_key": k.public_key,
-                    "algorithm": k.algorithm,
-                    "source": "db",
-                }
-                for k in keys_result.scalars().all()
-            }
-
             policy_result = await session.execute(
                 select(PartnerPolicy).where(
                     PartnerPolicy.partner_id == partner.id,
@@ -213,47 +218,11 @@ class PartnerService(BaseService):
                 )
             )
             policy = policy_result.scalars().first()
-            jwks_url = partner.jwks_url
 
-        # Fetch JWKS outside the DB session so we don't hold a connection during
-        # the network call. DB-stored keys win on kid collision.
-        if jwks_url:
-            for kid, entry in (await self._fetch_jwks_keys(jwks_url)).items():
-                keys.setdefault(kid, entry)
-
-        material = {"partner": partner, "keys": keys, "policy": policy}
+        material = {"partner": partner, "policy": policy}
         if _config.partner_cache_enabled:
             self._cache.set(audience, material)
         return material
-
-    async def _fetch_jwks_keys(self, jwks_url: str) -> dict:
-        """Poll a partner JWKS endpoint and parse it into {kid: {public_key, algorithm}}.
-
-        Best-effort: on any network/parse failure, logs a warning and returns the
-        keys parsed so far (possibly empty) so verification degrades to whatever
-        DB keys exist rather than erroring the whole request.
-        """
-        try:
-            async with httpx.AsyncClient(timeout=_config.partner_jwks_timeout_sec) as client:
-                resp = await client.get(jwks_url)
-                resp.raise_for_status()
-                document = resp.json()
-        except Exception as exc:
-            _logger.warning("Failed to fetch partner JWKS from %s: %s", jwks_url, exc)
-            return {}
-
-        keys: dict = {}
-        for jwk in document.get("keys", []):
-            kid = jwk.get("kid")
-            if not kid:
-                continue
-            try:
-                pem, alg = jwk_to_pem_and_alg(jwk)
-            except Exception as exc:
-                _logger.warning("Skipping unusable JWK (kid=%s) from %s: %s", kid, jwks_url, exc)
-                continue
-            keys[kid] = {"public_key": pem, "algorithm": alg, "source": "jwks"}
-        return keys
 
     def _invalidate(self, audience: Optional[str]) -> None:
         if audience:

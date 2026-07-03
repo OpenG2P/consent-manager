@@ -1,6 +1,8 @@
 import os
 from dataclasses import dataclass
 
+from .testkey import DEFAULT_KID, DEFAULT_PARTNER_ID, TEST_PRIVATE_KEY_PEM
+
 
 def _bool(value, default=False):
     if value is None:
@@ -19,6 +21,21 @@ class Config:
     client_id: str         # client-credentials client (has CONSENT_MANAGER_ADMIN)
     client_secret: str
     controller_id: str     # controller/module used for the self-contained test partner
+    # ── Partner Management (signed e2e round-trip) ──────────────────────────
+    # Partner signing keys live in PM, so CM can't self-inject one. The e2e signs
+    # with a private key (bundled TEST key by default) and ensures a persistent
+    # test partner in PM holds the matching public key. The public half is derived
+    # from the private key at seed time — only the private key is a "secret".
+    pm_partner_id: str          # stable PM reference for the sanity partner
+    pm_kid: str                 # kid registered in PM for the sanity key
+    pm_private_key_pem: str     # PEM private key the e2e signs with
+    pm_partner_api_url: str     # PM key-fetch base (to check servability), e.g. http://partner-management-partner-api
+    pm_admin_url: str           # PM staff-portal-api base (to seed), e.g. http://partner-management-staff-portal-api
+    # partner_manager client-credentials to call the PM admin API. Empty when PM
+    # auth is disabled (COMMON_AUTH_ENABLED=false).
+    pm_admin_token_url: str
+    pm_admin_client_id: str
+    pm_admin_client_secret: str
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -32,4 +49,17 @@ class Config:
             client_id=os.environ.get("SANITY_CLIENT_ID", "consent-manager"),
             client_secret=os.environ.get("SANITY_CLIENT_SECRET", ""),
             controller_id=os.environ.get("SANITY_CONTROLLER_ID", "sanity-controller"),
+            pm_partner_id=os.environ.get("SANITY_PM_PARTNER_ID") or DEFAULT_PARTNER_ID,
+            pm_kid=os.environ.get("SANITY_PM_KID") or DEFAULT_KID,
+            pm_private_key_pem=os.environ.get("SANITY_PM_PRIVATE_KEY_PEM") or TEST_PRIVATE_KEY_PEM,
+            pm_partner_api_url=(os.environ.get("SANITY_PM_PARTNER_API_URL") or "").rstrip("/"),
+            pm_admin_url=(os.environ.get("SANITY_PM_ADMIN_URL") or "").rstrip("/"),
+            pm_admin_token_url=os.environ.get("SANITY_PM_ADMIN_TOKEN_URL", ""),
+            pm_admin_client_id=os.environ.get("SANITY_PM_ADMIN_CLIENT_ID", "partner-management"),
+            pm_admin_client_secret=os.environ.get("SANITY_PM_ADMIN_CLIENT_SECRET", ""),
         )
+
+    @property
+    def can_reach_pm(self) -> bool:
+        """The signed e2e needs to at least check key servability in PM."""
+        return bool(self.pm_partner_api_url)

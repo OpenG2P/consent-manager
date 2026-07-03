@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -14,10 +14,14 @@ class PartnerStatus(str, Enum):
     suspended = "suspended"
 
 
-class KeyStatus(str, Enum):
-    active = "active"
-    rotated = "rotated"
-    revoked = "revoked"
+class ApprovalStatus(str, Enum):
+    # not_required: onboarding was immediate (AWE disabled).
+    # pending: submitted to AWE, awaiting a terminal webhook.
+    # approved / rejected: AWE delivered its terminal decision.
+    not_required = "not_required"
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
 
 
 class PolicyStatus(str, Enum):
@@ -41,32 +45,22 @@ class Partner(BaseORMModelWithId):
     audience: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     controller_id: Mapped[str] = mapped_column(String(255), index=True)
     status: Mapped[str] = mapped_column(String(20), default=PartnerStatus.active.value)
-    # Optional JWKS endpoint the CM may poll instead of locally stored keys.
-    jwks_url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
-
-
-class PartnerKey(BaseORMModelWithId):
-    """A public key used to verify a partner's signed consent objects.
-
-    NB: table is ``cm_partner_keys`` — not ``partner_keys`` — because
-    openg2p-fastapi-common (>= develop) ships its own ``PartnerKey`` mapped to
-    ``partner_keys`` for its local-crypto backend. CM keeps its own richer model
-    (Path B), so it uses a distinct table to avoid a MetaData table collision.
-    """
-
-    __tablename__ = "cm_partner_keys"
-    __table_args__ = (UniqueConstraint("partner_id", "kid", name="uq_cm_partner_kid"),)
-
-    partner_id: Mapped[str] = mapped_column(String, index=True)
-    kid: Mapped[str] = mapped_column(String(255), index=True)
-    algorithm: Mapped[str] = mapped_column(String(20))  # EdDSA | ES256 | RS256
-    public_key: Mapped[str] = mapped_column(Text)  # PEM
-    status: Mapped[str] = mapped_column(String(20), default=KeyStatus.active.value)
-    not_before: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
+    # The partner's reference in the Partner Management service — used to fetch
+    # its public keys from PM's key API (GET /keys/{partner_mgmt_id}). Signing
+    # keys are owned by PM, not CM. Falls back to `audience` when unset.
+    partner_mgmt_id: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True, index=True
     )
-    not_after: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
+
+    # Onboarding approval (AWE). approval_status is the source of truth for the
+    # onboarding gate; status stays non-active (suspended) while pending so the
+    # verification hot path — which filters status==active — never releases data
+    # for an unapproved partner. awe_request_id correlates to the AWE request.
+    approval_status: Mapped[str] = mapped_column(
+        String(20), default=ApprovalStatus.not_required.value
+    )
+    awe_request_id: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True, index=True
     )
 
 

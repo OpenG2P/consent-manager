@@ -1,0 +1,9 @@
+{
+  "apiBaseUrl": "",
+  "keycloak": {
+    "url": "",
+    "realm": "staff",
+    "clientId": "consent-manager-ui"
+  },
+  "adminRole": "CONSENT_MANAGER_ADMIN"
+}

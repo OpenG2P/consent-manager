@@ -11,8 +11,6 @@ from .lifecycle import (
     RevokeResponse,
 )
 from .partner import (
-    KeyCreate,
-    KeyResponse,
     PartnerCreate,
     PartnerResponse,
     PartnerUpdate,
@@ -39,8 +37,6 @@ __all__ = [
     "PartnerCreate",
     "PartnerUpdate",
     "PartnerResponse",
-    "KeyCreate",
-    "KeyResponse",
     "PolicyUpsert",
     "PolicyResponse",
     "ConsentRequestCreate",

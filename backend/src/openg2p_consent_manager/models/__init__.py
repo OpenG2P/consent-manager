@@ -1,4 +1,5 @@
 from .audit import AuditLog, DecisionLog
+from .awe import AweProcessedEvent
 from .base import BaseORMModelWithId, utcnow
 from .consent import (
     ArtefactSource,
@@ -11,10 +12,9 @@ from .consent import (
     RevocationRecord,
 )
 from .partner import (
+    ApprovalStatus,
     FetchType,
-    KeyStatus,
     Partner,
-    PartnerKey,
     PartnerPolicy,
     PartnerStatus,
     PolicyStatus,
@@ -24,10 +24,10 @@ __all__ = [
     "BaseORMModelWithId",
     "utcnow",
     "Partner",
-    "PartnerKey",
     "PartnerPolicy",
     "PartnerStatus",
-    "KeyStatus",
+    "ApprovalStatus",
+    "AweProcessedEvent",
     "PolicyStatus",
     "FetchType",
     "ConsentRequest",

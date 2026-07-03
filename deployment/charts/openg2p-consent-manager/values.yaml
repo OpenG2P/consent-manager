@@ -20,6 +20,20 @@ global:
   consentManagerAuthClientId: consent-manager
   consentManagerAdminRole: CONSENT_MANAGER_ADMIN
 
+  # ── Partner Management (partner signing keys) ───────────────────────────
+  # Partner public keys are owned by the shared Partner Management (PM) service.
+  # CM fetches them from PM's unauthenticated key API at verification time. Point
+  # this at the environment's PM partner-api service. Empty => key fetching is
+  # disabled and verification fails closed (no keys → deny).
+  partnerManagementApiUrl: http://partner-management-partner-api
+  # PM's admin (staff-portal) API — used ONLY by the sanity e2e to seed a
+  # persistent test partner. Not used by the running service.
+  partnerManagementAdminApiUrl: http://partner-management-staff-portal-api
+  # Keycloak client (client-credentials, role partner_manager) the sanity seed
+  # uses to call the PM admin API. A Secret of this name with key client_secret
+  # is read if present; absent => PM auth assumed disabled.
+  partnerManagementAdminClientId: partner-management
+
   # The data controller / module is a per-partner attribute set at onboarding —
   # one shared CM serves many modules, so there is no global controller setting.
 
@@ -199,6 +213,8 @@ consentManagerApi:
     CONSENT_MANAGER_AUTH_ISSUER: '{{ tpl .Values.global.keycloakIssuerUrl $ }}'
     CONSENT_MANAGER_AUTH_JWKS_URL: '{{ tpl .Values.global.keycloakIssuerUrl $ }}/protocol/openid-connect/certs'
     CONSENT_MANAGER_AUTH_ADMIN_ROLE: '{{ tpl .Values.global.consentManagerAdminRole $ }}'
+    # Partner Management key API — source of partner signing keys.
+    CONSENT_MANAGER_PARTNER_MGMT_API_URL: '{{ tpl .Values.global.partnerManagementApiUrl $ }}'
     # In demo mode, force a distinctive kid so any receipt / JWKS makes it obvious
     # a demo (insecure) key is in use; otherwise use the configured kid.
     CONSENT_MANAGER_CM_SIGNING_KID: '{{ if eq .Values.signingKey.mode "demo" }}cm-demo-INSECURE{{ else }}{{ tpl .Values.global.consentSigningKid $ }}{{ end }}'

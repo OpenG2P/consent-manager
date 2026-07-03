@@ -13,6 +13,6 @@ dependencies = [
 markers = [
   "smoke: liveness/wiring checks that need no auth and create no data",
   "contract: API contract checks (e.g. auth is enforced)",
-  "e2e: end-to-end signed /validate round-trip (creates a TEST_SANITY partner)",
+  "e2e: end-to-end signed /validate round-trip (seeds a persistent PM test partner)",
 ]
 addopts = "-ra -q"

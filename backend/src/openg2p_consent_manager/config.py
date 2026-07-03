@@ -64,14 +64,36 @@ class Settings(BaseSettings):
     oidc_audience: str = ""
 
     # ── Hot-path caching (pod-local, TTL) ───────────────────────────────────
-    # Partner keys and policies change rarely but are read on every validate.
-    # Cached in-process per pod; staleness bounded by the TTL.
+    # The partner row + its active policy change rarely but are read on every
+    # validate. Cached in-process per pod; staleness bounded by the TTL. (Keys
+    # are NOT part of this — they live in Partner Management, see below.)
     partner_cache_ttl_sec: int = 60
     partner_cache_enabled: bool = True
 
-    # Timeout (seconds) for polling a partner's JWKS endpoint (Partner.jwks_url),
-    # the optional second source of verifying keys alongside DB-stored keys.
-    partner_jwks_timeout_sec: int = 5
+    # ── Partner public keys (Partner Management service) ────────────────────
+    # Partner signing keys are no longer stored in CM. They are owned by the
+    # Partner Management (PM) service and fetched from its unauthenticated
+    # key-fetch API: GET {partner_mgmt_api_url}/keys/{reference_id}. CM caches
+    # them per pod with the discipline PM's Cache-Control implies. A partner's
+    # PM reference is Partner.partner_mgmt_id (falling back to Partner.audience).
+    #
+    # Empty partner_mgmt_api_url disables PM fetching — verification then fails
+    # closed (no keys → deny), which is the correct safe default until wired.
+    partner_mgmt_api_url: str = ""  # e.g. http://partner-management-partner-api:8000
+    # Soft TTL: refresh window. Bounds how long a rotated/revoked key stays
+    # trusted. Capped by the response's Cache-Control max-age when smaller.
+    partner_key_cache_ttl_seconds: int = 300
+    # Hard TTL: during a PM outage, serve last-known-good keys up to this age,
+    # then fail closed.
+    partner_key_hard_ttl_seconds: int = 21600
+    # Negative cache: remember a 404 ("no keys") briefly to avoid hammering PM
+    # for a disabled/unknown partner on every request.
+    partner_key_negative_ttl_seconds: int = 30
+    # Minimum interval between forced refetches for one partner (throttles the
+    # unknown-kid refresh that catches key rotation immediately).
+    partner_key_refresh_cooldown_seconds: int = 10
+    # HTTP timeout (seconds) for a single key fetch from PM.
+    partner_key_fetch_timeout_seconds: float = 3.0
 
     # ── Caller authentication (Keycloak / OIDC bearer) ──────────────────────
     # Validates bearer tokens on protected endpoints against the Keycloak JWKS,
@@ -86,3 +108,37 @@ class Settings(BaseSettings):
     auth_admin_role: str = "CONSENT_MANAGER_ADMIN"
     # Default subject id-type when a token omits the subject_id_type claim.
     subject_default_id_type: str = "national_id"
+
+    # ── Approval Workflow Engine (AWE) integration ──────────────────────────
+    # Partner onboarding (and, later, policy-widening) is gated behind human
+    # approval in the shared, per-environment AWE. CM is a *caller service*: it
+    # submits an approval request on onboarding and flips the partner to active
+    # only when AWE delivers a terminal `request_approved` webhook. Approvals
+    # themselves happen in AWE's own UI — CM never renders an approver inbox.
+    #
+    # When awe_enabled is false (default), onboarding is immediate (status
+    # active, approval_status not_required) — unchanged legacy behaviour.
+    awe_enabled: bool = False
+    # Base URL of the environment's AWE, reachable from CM pods (e.g.
+    # https://awe.<baseDomain>). No trailing slash needed.
+    awe_base_url: str = ""
+    awe_http_timeout_seconds: float = 30.0
+    # AWE policy that governs partner onboarding. Registered in AWE out-of-band.
+    awe_partner_onboarding_policy_key: str = "consent-manager.partner_onboarding.v1"
+    # CM→AWE service auth: Keycloak client-credentials. The fetched bearer is
+    # sent on POST /v1/awe/requests. If awe_static_token is set it is used
+    # verbatim instead (dev/testing).
+    awe_token_url: str = ""  # Keycloak token endpoint
+    awe_client_id: str = ""
+    awe_client_secret: str = ""
+    awe_static_token: str = ""
+    # Per-caller callback secret CM registered into the shared AWE DB. AWE looks
+    # the raw secret up by this id; CM holds the same raw secret to verify the
+    # HMAC on inbound webhooks. `callback_secret_id` is passed on every request.
+    awe_callback_secret_id: str = ""
+    awe_callback_hmac_secret: str = ""
+    # Public URL AWE should POST terminal webhooks back to. Must resolve to
+    # CM's /consent/v1/awe/webhooks/decision endpoint.
+    awe_callback_url: str = ""
+    # Reject webhooks whose signed timestamp is more than this far from now.
+    awe_webhook_max_skew_sec: int = 300

@@ -9,14 +9,16 @@ class PartnerCreate(BaseModel):
     org_name: str = Field(..., min_length=1, max_length=255)
     audience: str = Field(..., min_length=1, max_length=255)
     controller_id: str = Field(..., min_length=1, max_length=255)
-    jwks_url: Optional[str] = None
+    # Reference used to fetch this partner's keys from Partner Management. When
+    # omitted, CM falls back to `audience` as the PM reference.
+    partner_mgmt_id: Optional[str] = Field(None, max_length=255)
 
 
 class PartnerUpdate(BaseModel):
     name: Optional[str] = None
     org_name: Optional[str] = None
     status: Optional[str] = None  # active | suspended
-    jwks_url: Optional[str] = None
+    partner_mgmt_id: Optional[str] = None
 
 
 class PartnerResponse(BaseModel):
@@ -28,27 +30,13 @@ class PartnerResponse(BaseModel):
     audience: str
     controller_id: str
     status: str
-    jwks_url: Optional[str] = None
+    partner_mgmt_id: Optional[str] = None
     created_at: datetime
-
-
-class KeyCreate(BaseModel):
-    kid: str = Field(..., min_length=1, max_length=255)
-    algorithm: str = Field(..., examples=["EdDSA", "ES256", "RS256"])
-    public_key: str = Field(..., description="PEM-encoded public key")
-    not_before: Optional[datetime] = None
-    not_after: Optional[datetime] = None
-
-
-class KeyResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: str
-    kid: str
-    algorithm: str
-    status: str
-    not_before: Optional[datetime] = None
-    not_after: Optional[datetime] = None
+    # Onboarding approval (AWE). approval_status is not_required when AWE is
+    # disabled; otherwise pending → approved/rejected. awe_request_id is the
+    # correlating AWE request, surfaced to the admin console as the approval ref.
+    approval_status: str = "not_required"
+    awe_request_id: Optional[str] = None
 
 
 class PolicyUpsert(BaseModel):

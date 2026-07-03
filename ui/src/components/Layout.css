@@ -1,0 +1,86 @@
+.layout {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  padding: 0 28px;
+  height: 60px;
+  background: var(--color-black);
+  color: var(--color-white);
+}
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.topbar .logo {
+  height: 30px;
+  width: auto;
+}
+.topbar .product {
+  font-family: var(--font-heading);
+  font-weight: 500;
+  font-size: 16px;
+  color: var(--color-white);
+  border-left: 1px solid rgba(255, 255, 255, 0.25);
+  padding-left: 12px;
+}
+
+.topnav {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+.topnav a {
+  color: rgba(255, 255, 255, 0.75);
+  font-weight: 500;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+}
+.topnav a:hover {
+  color: var(--color-white);
+}
+.topnav a.active {
+  color: var(--color-black);
+  background: var(--color-yellow);
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.topbar-right .user {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+}
+.dev-pill {
+  background: var(--color-orange);
+  color: var(--color-black);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.content {
+  flex: 1;
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 32px 28px;
+}
+
+.footer {
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  padding: 20px;
+  border-top: 1px solid var(--color-grey);
+}

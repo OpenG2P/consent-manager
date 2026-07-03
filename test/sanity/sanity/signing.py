@@ -36,9 +36,26 @@ def new_keypair():
     return priv, pem
 
 
+def load_private_key_pem(pem: str):
+    """Load a PEM private key (Ed25519 / EC / RSA) — the partner's signing key,
+    seeded in Partner Management, that the e2e signs with."""
+    return serialization.load_pem_private_key(pem.encode("utf-8"), password=None)
+
+
 def sign_object(obj_without_signature: dict, priv, kid: str, algorithm: str = "EdDSA") -> dict:
-    value = b64url_encode(priv.sign(canonical_bytes(obj_without_signature)))
-    return {"algorithm": algorithm, "kid": kid, "value": value}
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec, padding
+
+    msg = canonical_bytes(obj_without_signature)
+    if algorithm == "EdDSA":
+        sig = priv.sign(msg)
+    elif algorithm == "ES256":
+        sig = priv.sign(msg, ec.ECDSA(hashes.SHA256()))
+    elif algorithm == "RS256":
+        sig = priv.sign(msg, padding.PKCS1v15(), hashes.SHA256())
+    else:
+        raise ValueError(f"unsupported signing algorithm: {algorithm!r}")
+    return {"algorithm": algorithm, "kid": kid, "value": b64url_encode(sig)}
 
 
 def _public_key_from_jwk(jwk: dict):

@@ -1,6 +1,9 @@
+from .awe_client import AweClient, AweClientError
+from .awe_webhook_service import AweWebhookService, WebhookError
 from .consent_service import ConsentService
 from .crypto_service import CryptoService
 from .lifecycle_service import LifecycleError, LifecycleService
+from .partner_key_store import PartnerMgmtKeyStore
 from .partner_service import PartnerService
 from .policy_service import PolicyResult, PolicyService
 from .receipt_service import ReceiptService
@@ -8,7 +11,12 @@ from .verification_service import VerificationService
 
 __all__ = [
     "CryptoService",
+    "AweClient",
+    "AweClientError",
+    "AweWebhookService",
+    "WebhookError",
     "PartnerService",
+    "PartnerMgmtKeyStore",
     "PolicyService",
     "PolicyResult",
     "ReceiptService",

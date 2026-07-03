@@ -1,6 +1,7 @@
 import httpx
 import pytest
 
+from sanity import pm_seed
 from sanity.config import Config
 
 
@@ -43,3 +44,23 @@ def admin_token(cfg):
 @pytest.fixture
 def auth_headers(admin_token):
     return {"Authorization": f"Bearer {admin_token}"} if admin_token else {}
+
+
+@pytest.fixture(scope="session")
+def pm_partner(cfg):
+    """Ensure the persistent sanity test partner + key exist in Partner Management.
+
+    Skips the signed e2e (rather than failing) when PM isn't reachable/seedable,
+    so smoke + contract coverage stays green in environments without PM. The
+    seeded partner is intentionally left in place after the run.
+    """
+    if not cfg.can_reach_pm:
+        pytest.skip(
+            "SANITY_PM_PARTNER_API_URL not set — cannot reach Partner Management to "
+            "verify/seed the test partner; signed e2e skipped"
+        )
+    try:
+        status = pm_seed.ensure_seeded(cfg)
+    except Exception as exc:  # noqa: BLE001 — surface as a skip with the reason
+        pytest.skip(f"could not seed PM test partner: {exc}")
+    return {"status": status, "partner_id": cfg.pm_partner_id, "kid": cfg.pm_kid}

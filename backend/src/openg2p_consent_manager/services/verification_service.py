@@ -11,13 +11,13 @@ from ..models import (
     ArtefactSource,
     ArtefactStatus,
     ConsentArtefact,
-    ConsentReceipt,
     DecisionLog,
 )
 from ..schemas.common import ReasonCode
 from ..schemas.verification import Decision, ValidateRequest
 from ..utils.canonical import canonical_bytes, sha256_hex
 from .crypto_service import CryptoService
+from .partner_key_store import PartnerMgmtKeyStore
 from .partner_service import PartnerService
 from .policy_service import PolicyService
 from .receipt_service import ReceiptService
@@ -36,6 +36,7 @@ class VerificationService(BaseService):
     def __init__(self, name="", **kwargs):
         super().__init__(name, **kwargs)
         self.partners = PartnerService.get_component()
+        self.keys = PartnerMgmtKeyStore.get_component()
         self.crypto = CryptoService.get_component()
         self.policy = PolicyService.get_component()
         self.receipts = ReceiptService.get_component()
@@ -61,11 +62,23 @@ class VerificationService(BaseService):
         policy = material["policy"]
         policy_version = policy.version if policy else None
 
-        # 3. Signature — resolve key by kid, check algorithm allowed, verify.
-        key = material["keys"].get(obj.signature.kid)
+        # 3. Signature — resolve the verifying key from Partner Management by the
+        # partner's PM reference (partner_mgmt_id, falling back to audience) and
+        # the object's kid, then check the algorithm is allowed and verify.
+        reference_id = partner.partner_mgmt_id or partner.audience
+        key = await self.keys.get_key(reference_id, obj.signature.kid)
         if key is None:
             return await self._deny(
-                ReasonCode.unknown_partner, f"unknown kid '{obj.signature.kid}'",
+                ReasonCode.unknown_partner,
+                f"no verifying key for kid '{obj.signature.kid}' from partner management",
+                now, ctx_hash, partner_id=partner.id, jti=obj.jti,
+                policy_version=policy_version,
+            )
+        # Guard against algorithm confusion: the declared alg must match the key
+        # PM registered for this kid.
+        if key.get("algorithm") and obj.signature.algorithm != key["algorithm"]:
+            return await self._deny(
+                ReasonCode.signature_invalid, "signing algorithm does not match key",
                 now, ctx_hash, partner_id=partner.id, jti=obj.jti,
                 policy_version=policy_version,
             )

@@ -3,44 +3,45 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from sanity.signing import new_keypair, sign_object, verify_receipt_signature
+from sanity.signing import load_private_key_pem, sign_object, verify_receipt_signature
 
-# Full PDP round-trip: onboard a self-contained TEST_SANITY partner, sign a
-# consent object as that partner, and exercise permit + the key denials, then
-# verify the CM's receipt signature against its JWKS. Gated by SANITY_RUN_E2E.
+# Full PDP round-trip. Partner signing keys now live in the Partner Management
+# (PM) service — CM fetches them at validate time and can no longer self-inject a
+# key. So the e2e onboards a CM partner whose ``partner_mgmt_id`` points at a
+# PM-seeded test partner, signs a consent object with the matching private key
+# (supplied via SANITY_PM_* env), and exercises permit + the key denials, then
+# verifies the CM receipt against its JWKS. Gated by SANITY_RUN_E2E and by the
+# presence of PM signing material.
 
 SCOPES = ["farmer_profile.basic", "farmer_profile.crops"]
 
 
 @pytest.mark.e2e
-def test_validate_roundtrip(client, cfg, auth_headers):
+def test_validate_roundtrip(client, cfg, auth_headers, pm_partner):
     if not cfg.run_e2e:
         pytest.skip("SANITY_RUN_E2E not enabled")
 
+    # pm_partner fixture has ensured PM serves cfg.pm_partner_id / cfg.pm_kid.
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     aud = f"TEST_SANITY_AUD_{ts}_{uuid.uuid4().hex[:6]}"
-    kid = "sanity-key-1"
-    priv, pem = new_keypair()
+    kid = cfg.pm_kid
+    priv = load_private_key_pem(cfg.pm_private_key_pem)
 
-    # 1. onboard partner + key + policy (self-contained controller/audience)
+    # 1. onboard a CM partner bound to the PM test partner + policy.
     r = client.post("/consent/v1/partners", headers=auth_headers, json={
         "name": f"TEST_SANITY {ts}", "org_name": "Sanity Suite",
         "audience": aud, "controller_id": cfg.controller_id,
+        "partner_mgmt_id": cfg.pm_partner_id,
     })
     assert r.status_code == 201, r.text
     pid = r.json()["id"]
 
     try:
-        r = client.post(f"/consent/v1/partners/{pid}/keys", headers=auth_headers, json={
-            "kid": kid, "algorithm": "EdDSA", "public_key": pem,
-        })
-        assert r.status_code == 201, r.text
-
         r = client.put(f"/consent/v1/partners/{pid}/policy", headers=auth_headers, json={
             "allowed_data_scopes": SCOPES,
             "allowed_purposes": ["share_farm_profile"],
             "allowed_subject_id_types": ["national_id"],
-            "allowed_signing_algs": ["EdDSA"],
+            "allowed_signing_algs": ["EdDSA", "ES256", "RS256"],
             "max_validity_duration": "P1Y", "fetch_type": "oneshot",
         })
         assert r.status_code == 200, r.text
@@ -62,7 +63,8 @@ def test_validate_roundtrip(client, cfg, auth_headers):
                 },
                 "issued_at": now.isoformat(),
             }
-            obj["signature"] = sign_object(obj, priv, kid)
+            # The PM-registered key's algorithm is inferred from the loaded key.
+            obj["signature"] = sign_object(obj, priv, kid, algorithm=_alg_for(priv))
             return obj
 
         # 2. permit — request a subset; effective = consented ∩ policy ∩ requested
@@ -105,3 +107,15 @@ def test_validate_roundtrip(client, cfg, auth_headers):
         # cleanup — no DELETE endpoint; suspend the test partner so it's inert.
         client.patch(f"/consent/v1/partners/{pid}", headers=auth_headers,
                      json={"status": "suspended"})
+
+
+def _alg_for(priv) -> str:
+    from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa
+
+    if isinstance(priv, ed25519.Ed25519PrivateKey):
+        return "EdDSA"
+    if isinstance(priv, ec.EllipticCurvePrivateKey):
+        return "ES256"
+    if isinstance(priv, rsa.RSAPrivateKey):
+        return "RS256"
+    raise ValueError("unsupported private key type for sanity signing")
