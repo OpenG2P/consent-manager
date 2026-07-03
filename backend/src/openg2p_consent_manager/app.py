@@ -10,6 +10,7 @@ from openg2p_fastapi_common.app import Initializer as BaseInitializer
 
 from .controllers import (
     AweController,
+    DecisionsController,
     LifecycleController,
     PartnerController,
     SubjectController,
@@ -61,13 +62,28 @@ class Initializer(BaseInitializer):
         AweClient()
         AweWebhookService()  # depends on PartnerService
 
-        # Controllers.
-        VerificationController().post_init()
-        WellKnownController().post_init()
-        PartnerController().post_init()
-        LifecycleController().post_init()
-        SubjectController().post_init()
-        AweController().post_init()
+        # Controllers — mounted per API audience (the platform's 4-API pattern).
+        # One image, one deployable per audience; each mounts only its routes.
+        audience = _config.api_audience
+        staff = audience in ("staff", "all")
+        partner = audience in ("partner", "all")
+        beneficiary = audience in ("beneficiary", "all")
+        _logger.info("Consent Manager API audience: %s", audience)
+
+        if partner:
+            # PARTNER api — PDP. Trust = partner-signed consent object (PM keys),
+            # no Keycloak. Serves /validate, status, receipts, JWKS.
+            VerificationController().post_init()
+            WellKnownController().post_init()
+        if staff:
+            # STAFF api — Keycloak staff realm. Policy admin, approvals, decisions.
+            PartnerController().post_init()
+            AweController().post_init()
+            DecisionsController().post_init()
+        if beneficiary:
+            # BENEFICIARY api — Keycloak beneficiary realm. /my/* + origination.
+            SubjectController().post_init()
+            LifecycleController().post_init()
 
     def migrate_database(self, args):
         super().migrate_database(args)

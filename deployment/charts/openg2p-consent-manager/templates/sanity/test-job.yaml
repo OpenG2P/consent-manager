@@ -32,6 +32,8 @@ spec:
           env:
             - name: SANITY_BASE_URL
               value: {{ tpl $s.baseUrl $ | quote }}
+            - name: SANITY_PARTNER_BASE_URL
+              value: {{ tpl $s.partnerBaseUrl $ | quote }}
             - name: SANITY_VERIFY_TLS
               value: {{ $s.verifyTls | quote }}
             - name: SANITY_RUN_E2E

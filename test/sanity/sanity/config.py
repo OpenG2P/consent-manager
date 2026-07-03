@@ -12,7 +12,11 @@ def _bool(value, default=False):
 
 @dataclass
 class Config:
-    base_url: str          # CM service base, e.g. http://consent-manager-api (no path prefix)
+    # CM is split by API audience (staff / partner). base_url is the STAFF api
+    # (policy admin); partner_base_url is the PARTNER api (/validate, JWKS,
+    # receipts). Default partner→base_url so a single audience=all instance works.
+    base_url: str          # STAFF api base, e.g. http://consent-manager-api (no path prefix)
+    partner_base_url: str  # PARTNER api base, e.g. http://consent-manager-partner-api
     verify_tls: bool
     run_e2e: bool          # run the data-creating round-trip
     fail_on_error: bool    # propagate pytest exit code (CD gating) — handled in entrypoint
@@ -39,8 +43,12 @@ class Config:
 
     @classmethod
     def from_env(cls) -> "Config":
+        base_url = (os.environ.get("SANITY_BASE_URL") or "http://localhost:8000").rstrip("/")
         return cls(
-            base_url=(os.environ.get("SANITY_BASE_URL") or "http://localhost:8000").rstrip("/"),
+            base_url=base_url,
+            # Default the partner base to the staff base so a single audience=all
+            # instance (dev) works; the split deployment sets it to the partner api.
+            partner_base_url=(os.environ.get("SANITY_PARTNER_BASE_URL") or base_url).rstrip("/"),
             verify_tls=_bool(os.environ.get("SANITY_VERIFY_TLS"), True),
             run_e2e=_bool(os.environ.get("SANITY_RUN_E2E"), False),
             fail_on_error=_bool(os.environ.get("SANITY_FAIL_ON_ERROR"), False),

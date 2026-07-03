@@ -12,7 +12,15 @@ def cfg() -> Config:
 
 @pytest.fixture(scope="session")
 def client(cfg):
+    # STAFF api (policy admin, decisions, approvals).
     with httpx.Client(base_url=cfg.base_url, verify=cfg.verify_tls, timeout=20) as c:
+        yield c
+
+
+@pytest.fixture(scope="session")
+def partner_client(cfg):
+    # PARTNER api (/validate, status, receipts, JWKS) — no Keycloak.
+    with httpx.Client(base_url=cfg.partner_base_url, verify=cfg.verify_tls, timeout=20) as c:
         yield c
 
 

@@ -1,6 +1,9 @@
-{{- $values := .Values.consentManagerApi -}}
-{{- $context := dict "Values" (merge (deepCopy $values) (dict "global" .Values.global)) "Chart" .Chart "Release" .Release "Files" .Files "Capabilities" .Capabilities -}}
-{{- with $context -}}
+{{- range $api := .Values.extraApis }}
+{{- if $api.enabled }}
+{{- $values := merge (deepCopy $api) (deepCopy $.Values.consentManagerApi) -}}
+{{- $context := dict "Values" (merge (deepCopy $values) (dict "global" $.Values.global)) "Chart" $.Chart "Release" $.Release "Files" $.Files "Capabilities" $.Capabilities -}}
+{{- with $context }}
+---
 apiVersion: v1
 kind: Service
 metadata:
@@ -18,4 +21,6 @@ spec:
       targetPort: http
   selector: {{- include "common.labels.matchLabels" (dict "customLabels" .Values.podLabels "context" $) | nindent 4 }}
     app.kubernetes.io/component: consent-manager-{{ .Values.nameOverride }}
-{{- end -}}
+{{- end }}
+{{- end }}
+{{- end }}

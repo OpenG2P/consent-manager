@@ -17,7 +17,9 @@ SCOPES = ["farmer_profile.basic", "farmer_profile.crops"]
 
 
 @pytest.mark.e2e
-def test_validate_roundtrip(client, cfg, auth_headers, pm_partner):
+def test_validate_roundtrip(client, partner_client, cfg, auth_headers, pm_partner):
+    # client = STAFF api (policy admin); partner_client = PARTNER api (/validate,
+    # receipts, JWKS — no Keycloak).
     if not cfg.run_e2e:
         pytest.skip("SANITY_RUN_E2E not enabled")
 
@@ -29,7 +31,7 @@ def test_validate_roundtrip(client, cfg, auth_headers, pm_partner):
 
     # 1. onboard a CM partner bound to the PM test partner + policy.
     r = client.post("/consent/v1/partners", headers=auth_headers, json={
-        "name": f"TEST_SANITY {ts}", "org_name": "Sanity Suite",
+        "name": f"TEST_SANITY {ts}",
         "audience": aud, "controller_id": cfg.controller_id,
         "partner_mgmt_id": cfg.pm_partner_id,
     })
@@ -69,7 +71,7 @@ def test_validate_roundtrip(client, cfg, auth_headers, pm_partner):
 
         # 2. permit — request a subset; effective = consented ∩ policy ∩ requested
         obj = signed_object(SCOPES + ["farmer_profile.landholdings"])
-        r = client.post("/consent/v1/validate", headers=auth_headers, json={
+        r = partner_client.post("/consent/v1/validate", json={
             "consent_object": obj, "partner_id": pid,
             "request_context": {"requested_scopes": SCOPES},
         })
@@ -80,8 +82,8 @@ def test_validate_roundtrip(client, cfg, auth_headers, pm_partner):
         receipt_id = dec["receipt_id"]
 
         # 3. the CM receipt is signed by the CM key — verify against its JWKS
-        receipt = client.get(f"/consent/v1/receipts/{receipt_id}").json()
-        jwks = client.get("/.well-known/jwks.json").json()
+        receipt = partner_client.get(f"/consent/v1/receipts/{receipt_id}").json()
+        jwks = partner_client.get("/.well-known/jwks.json").json()
         sig = receipt["signature"]
         msg = receipt["consent_artefact"]["hash"].encode("utf-8")
         assert verify_receipt_signature(
@@ -91,14 +93,14 @@ def test_validate_roundtrip(client, cfg, auth_headers, pm_partner):
         # 4. denial — tampered signature
         bad = signed_object(["farmer_profile.basic"])
         bad["data_scopes"] = ["farmer_profile.crops"]  # mutate AFTER signing
-        d = client.post("/consent/v1/validate", headers=auth_headers, json={
+        d = partner_client.post("/consent/v1/validate", json={
             "consent_object": bad, "partner_id": pid,
         }).json()
         assert d["decision"] == "deny" and d["reason_code"] == "signature_invalid", d
 
         # 5. denial — scope outside policy
         over = signed_object(["farmer_profile.landholdings"])
-        d = client.post("/consent/v1/validate", headers=auth_headers, json={
+        d = partner_client.post("/consent/v1/validate", json={
             "consent_object": over, "partner_id": pid,
         }).json()
         assert d["decision"] == "deny" and d["reason_code"] == "scope_exceeds_policy", d

@@ -1,6 +1,16 @@
-{{- $values := .Values.consentManagerApi -}}
-{{- $context := dict "Values" (merge (deepCopy $values) (dict "global" .Values.global)) "Chart" .Chart "Release" .Release "Files" .Files "Capabilities" .Capabilities -}}
-{{- with $context -}}
+{{- /*
+Extra API-audience Deployments (partner, beneficiary) — same image + chart as
+the staff api, one Deployment each. Each entry in .Values.extraApis is merged
+OVER .Values.consentManagerApi so it inherits image/resources/probes/env and only
+states its differences (audience, auth, signing, hostname). Body is identical to
+templates/api/deployment.yaml.
+*/ -}}
+{{- range $api := .Values.extraApis }}
+{{- if $api.enabled }}
+{{- $values := merge (deepCopy $api) (deepCopy $.Values.consentManagerApi) -}}
+{{- $context := dict "Values" (merge (deepCopy $values) (dict "global" $.Values.global)) "Chart" $.Chart "Release" $.Release "Files" $.Files "Capabilities" $.Capabilities -}}
+{{- with $context }}
+---
 apiVersion: {{ include "common.capabilities.deployment.apiVersion" . }}
 kind: Deployment
 metadata:
@@ -47,8 +57,6 @@ spec:
           {{- end }}
           env:
             {{- include "consentManagerApi.envVars" . | nindent 12 }}
-            # Per-audience overrides (the 4-API pattern): which controllers this
-            # instance mounts, and whether Keycloak auth applies (partner=off).
             - name: CONSENT_MANAGER_API_AUDIENCE
               value: {{ .Values.apiAudience | quote }}
             - name: CONSENT_MANAGER_AUTH_ENABLED
@@ -88,4 +96,6 @@ spec:
               - key: {{ .Values.signingKey.secretKey }}
                 path: {{ .Values.signingKey.secretKey }}
       {{- end }}
-{{- end -}}
+{{- end }}
+{{- end }}
+{{- end }}

@@ -9,6 +9,15 @@ class Settings(BaseSettings):
         env_prefix="consent_manager_", env_file=".env", extra="allow"
     )
 
+    # Which API audience this instance serves — the platform's 4-API pattern
+    # (staff / partner / beneficiary / agent). One image, one deployable per
+    # audience; each mounts only its controllers and uses its own auth:
+    #   staff       — Keycloak (staff realm): policy bindings, approvals, decisions
+    #   partner     — PM keys (no Keycloak): the PDP /validate, status, receipts, JWKS
+    #   beneficiary — Keycloak (beneficiary realm): /my/* + origination (deferred)
+    #   all         — everything in one process (dev / back-compat default)
+    api_audience: str = "all"
+
     openapi_title: str = "OpenG2P Consent Manager"
     openapi_description: str = """
         Consent Manager for OpenG2P.

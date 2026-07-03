@@ -9,8 +9,13 @@ global:
   consentDBSecret: '{{ .Release.Name }}-db'
   consentDBUserPasswordKey: '{{ .Release.Name }}-db-user'
 
-  # ── Hostname / routing ──────────────────────────────────────────────────
+  # ── Hostname / routing (one per API audience) ───────────────────────────
+  # staff console + admin API:
   consentManagerHostname: 'consent-manager.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
+  # partner-facing PDP (/validate, receipts, JWKS) — verified via PM keys:
+  consentManagerPartnerHostname: 'consent-manager-partner.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
+  # beneficiary self-service (/my/*, origination) — scaffolded, disabled:
+  consentManagerBeneHostname: 'consent-manager-bene.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
 
   # ── Keycloak (caller auth) ──────────────────────────────────────────────
   keycloakBaseUrl: 'https://keycloak.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
@@ -142,10 +147,69 @@ keycloak-init:
             # partner-management:
             #   - partner_manager
 
+# Additional API-audience deployments in THIS chart (same image, separate
+# Deployment/Service/VirtualService). Each entry is merged OVER consentManagerApi,
+# so it only needs to state its differences. This is how the one chart runs the
+# partner api (PM keys, no Keycloak) and a scaffolded beneficiary api alongside
+# the staff api above.
+extraApis:
+  # PARTNER api — the PDP. Trust = partner-signed consent object via PM keys;
+  # NO Keycloak. Mints receipts + serves JWKS, so it mounts the signing key.
+  - enabled: true
+    nameOverride: partner-api
+    apiAudience: partner
+    authEnabled: 'false'
+    signingKeyMounted: true
+    hostname: '{{ tpl .Values.global.consentManagerPartnerHostname $ }}'
+    openapiRootPath: /api/consent-manager-partner
+    istio:
+      enabled: true
+      virtualservice:
+        enabled: true
+        host: '{{ tpl .Values.global.consentManagerPartnerHostname $ }}'
+        gateway: "internal"
+        destination: '{{ .Release.Name }}-partner-api'
+        destinationPort: 80
+        prefix: /api/consent-manager-partner/
+        rewriteUri: "/"
+      gateway:
+        enabled: false
+  # BENEFICIARY api — /my/* + origination. Keycloak beneficiary realm. Scaffolded
+  # but DISABLED — enable when you expose beneficiary self-service.
+  - enabled: false
+    nameOverride: bene-api
+    apiAudience: beneficiary
+    authEnabled: 'true'
+    signingKeyMounted: false
+    hostname: '{{ tpl .Values.global.consentManagerBeneHostname $ }}'
+    openapiRootPath: /api/consent-manager-bene
+    istio:
+      enabled: true
+      virtualservice:
+        enabled: true
+        host: '{{ tpl .Values.global.consentManagerBeneHostname $ }}'
+        gateway: "internal"
+        destination: '{{ .Release.Name }}-bene-api'
+        destinationPort: 80
+        prefix: /api/consent-manager-bene/
+        rewriteUri: "/"
+      gateway:
+        enabled: false
+
 consentManagerApi:
   enabled: true
   nameOverride: api
   hostname: '{{ tpl .Values.global.consentManagerHostname $ }}'
+  # ── API audience (the platform's 4-API pattern) ─────────────────────────
+  # This deployment is the STAFF api: Keycloak (staff realm) — policy bindings,
+  # approvals inbox (AWE proxy), decisions. The PARTNER api (PDP /validate,
+  # verified via PM keys, no Keycloak) and a scaffolded BENEFICIARY api are
+  # defined in `extraApis` below — same image, same chart, separate Deployments.
+  apiAudience: staff
+  authEnabled: '{{ .Values.global.consentManagerAuthEnabled }}'
+  # The staff api never signs — receipts/JWKS are the partner api's job — so the
+  # signing key is NOT mounted here (only on the partner api).
+  signingKeyMounted: false
   replicaCount: 1
 
   # Horizontal scaling — the pods are stateless, so turn this on for high
@@ -249,7 +313,9 @@ consentManagerApi:
     CONSENT_MANAGER_DB_USERNAME: '{{ tpl .Values.global.consentDBUser $ }}'
     CONSENT_MANAGER_APP_PORT: '{{ .Values.containerPort }}'
     CONSENT_MANAGER_OPENAPI_ROOT_PATH: '{{ .Values.openapiRootPath }}'
-    CONSENT_MANAGER_AUTH_ENABLED: '{{ .Values.global.consentManagerAuthEnabled }}'
+    # NB: CONSENT_MANAGER_AUTH_ENABLED and CONSENT_MANAGER_CM_SIGNING_P12_PATH are
+    # set PER-DEPLOYMENT (see apiAudience / authEnabled / signingKeyMounted) — the
+    # partner api runs auth-disabled and the signing key only mounts on it.
     CONSENT_MANAGER_AUTH_ISSUER: '{{ tpl .Values.global.keycloakIssuerUrl $ }}'
     CONSENT_MANAGER_AUTH_JWKS_URL: '{{ tpl .Values.global.keycloakIssuerUrl $ }}/protocol/openid-connect/certs'
     CONSENT_MANAGER_AUTH_ADMIN_ROLE: '{{ tpl .Values.global.consentManagerAdminRole $ }}'
@@ -272,9 +338,8 @@ consentManagerApi:
     # a demo (insecure) key is in use; otherwise use the configured kid.
     CONSENT_MANAGER_CM_SIGNING_KID: '{{ if eq .Values.signingKey.mode "demo" }}cm-demo-INSECURE{{ else }}{{ tpl .Values.global.consentSigningKid $ }}{{ end }}'
     CONSENT_MANAGER_CM_SIGNING_IS_DEMO: '{{ if and .Values.signingKey.enabled (eq .Values.signingKey.mode "demo") }}true{{ else }}false{{ end }}'
-    # Only set when the .p12 Secret is actually mounted; empty otherwise so the
-    # service falls back to PEM/ephemeral instead of crashing on a missing file.
-    CONSENT_MANAGER_CM_SIGNING_P12_PATH: '{{ if .Values.signingKey.enabled }}{{ .Values.signingKey.mountPath }}/{{ .Values.signingKey.secretKey }}{{ end }}'
+    # (CONSENT_MANAGER_CM_SIGNING_P12_PATH is set per-deployment when
+    #  signingKeyMounted — only the partner api, which mints receipts.)
 
   envVarsFrom:
     CONSENT_MANAGER_DB_PASSWORD:
@@ -372,9 +437,10 @@ sanity:
     repository: openg2p/openg2p-consent-manager-sanity
     tag: develop
     pullPolicy: Always
-  # In-cluster Service URL (no ingress path prefix). The chart Service is
-  # <release>-api on port 80.
+  # In-cluster Service URLs (no ingress path prefix). Staff api = <release>-api;
+  # partner api (/validate, JWKS, receipts) = <release>-partner-api. Both :80.
   baseUrl: 'http://{{ .Release.Name }}-api'
+  partnerBaseUrl: 'http://{{ .Release.Name }}-partner-api'
   verifyTls: false
   # true (default) → also run the signed /validate round-trip. This deploys a
   #   pm-seed Job first that ensures a persistent test partner + key exists in
