@@ -12,7 +12,6 @@ from .consent import (
     RevocationRecord,
 )
 from .partner import (
-    ApprovalStatus,
     FetchType,
     Partner,
     PartnerPolicy,
@@ -26,9 +25,8 @@ __all__ = [
     "Partner",
     "PartnerPolicy",
     "PartnerStatus",
-    "ApprovalStatus",
-    "AweProcessedEvent",
     "PolicyStatus",
+    "AweProcessedEvent",
     "FetchType",
     "ConsentRequest",
     "RequestStatus",

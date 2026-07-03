@@ -4,19 +4,19 @@ from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
+# A "partner" here is CM's policy *binding* (PM owns the partner identity/keys).
 class PartnerCreate(BaseModel):
-    name: str = Field(..., min_length=1, max_length=255)
-    org_name: str = Field(..., min_length=1, max_length=255)
+    # Reference to the Partner-Management partner whose keys verify this partner's
+    # consent objects. When omitted, CM falls back to `audience` as the PM ref.
+    partner_mgmt_id: Optional[str] = Field(None, max_length=255)
     audience: str = Field(..., min_length=1, max_length=255)
     controller_id: str = Field(..., min_length=1, max_length=255)
-    # Reference used to fetch this partner's keys from Partner Management. When
-    # omitted, CM falls back to `audience` as the PM reference.
-    partner_mgmt_id: Optional[str] = Field(None, max_length=255)
+    # Optional display label (identity is authoritative in Partner Management).
+    name: Optional[str] = Field(None, max_length=255)
 
 
 class PartnerUpdate(BaseModel):
     name: Optional[str] = None
-    org_name: Optional[str] = None
     status: Optional[str] = None  # active | suspended
     partner_mgmt_id: Optional[str] = None
 
@@ -25,18 +25,12 @@ class PartnerResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    name: str
-    org_name: str
+    name: Optional[str] = None
     audience: str
     controller_id: str
     status: str
     partner_mgmt_id: Optional[str] = None
     created_at: datetime
-    # Onboarding approval (AWE). approval_status is not_required when AWE is
-    # disabled; otherwise pending → approved/rejected. awe_request_id is the
-    # correlating AWE request, surfaced to the admin console as the approval ref.
-    approval_status: str = "not_required"
-    awe_request_id: Optional[str] = None
 
 
 class PolicyUpsert(BaseModel):
@@ -56,5 +50,6 @@ class PolicyResponse(PolicyUpsert):
     id: str
     partner_id: str
     version: int
-    status: str
+    status: str  # pending | active | superseded | rejected
+    awe_request_id: Optional[str] = None
     effective_from: Optional[datetime] = None

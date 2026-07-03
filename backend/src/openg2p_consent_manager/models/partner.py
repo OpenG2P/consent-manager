@@ -14,19 +14,14 @@ class PartnerStatus(str, Enum):
     suspended = "suspended"
 
 
-class ApprovalStatus(str, Enum):
-    # not_required: onboarding was immediate (AWE disabled).
-    # pending: submitted to AWE, awaiting a terminal webhook.
-    # approved / rejected: AWE delivered its terminal decision.
-    not_required = "not_required"
-    pending = "pending"
-    approved = "approved"
-    rejected = "rejected"
-
-
 class PolicyStatus(str, Enum):
+    # A versioned data-share policy's lifecycle. When AWE approval is enabled, a
+    # widening policy is created `pending` and only becomes `active` once AWE
+    # approves it (superseding the prior active version); `rejected` if declined.
+    pending = "pending"
     active = "active"
     superseded = "superseded"
+    rejected = "rejected"
 
 
 class FetchType(str, Enum):
@@ -35,12 +30,19 @@ class FetchType(str, Enum):
 
 
 class Partner(BaseORMModelWithId):
-    """A third party onboarded to receive data, bound by a policy."""
+    """A partner *policy binding*: it binds a Partner-Management partner (by
+    ``partner_mgmt_id``) to a data controller and a versioned data-share policy.
+
+    Partner identity, org, lifecycle and signing keys are owned by the Partner
+    Management service — this row is NOT the partner record, only CM's binding of
+    a policy to that partner for a given controller. ``name`` is a non-authoritative
+    display label only.
+    """
 
     __tablename__ = "partners"
 
-    name: Mapped[str] = mapped_column(String(255))
-    org_name: Mapped[str] = mapped_column(String(255))
+    # Non-authoritative display label (identity lives in Partner Management).
+    name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     # The identifier this partner presents as `aud` in a consent object.
     audience: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     controller_id: Mapped[str] = mapped_column(String(255), index=True)
@@ -52,20 +54,10 @@ class Partner(BaseORMModelWithId):
         String(255), nullable=True, index=True
     )
 
-    # Onboarding approval (AWE). approval_status is the source of truth for the
-    # onboarding gate; status stays non-active (suspended) while pending so the
-    # verification hot path — which filters status==active — never releases data
-    # for an unapproved partner. awe_request_id correlates to the AWE request.
-    approval_status: Mapped[str] = mapped_column(
-        String(20), default=ApprovalStatus.not_required.value
-    )
-    awe_request_id: Mapped[Optional[str]] = mapped_column(
-        String(64), nullable=True, index=True
-    )
-
 
 class PartnerPolicy(BaseORMModelWithId):
-    """The ceiling on everything a partner can be granted. Versioned."""
+    """The ceiling on everything a partner can be granted. Versioned. A widening
+    version may sit in `pending` awaiting AWE approval before it goes active."""
 
     __tablename__ = "partner_policies"
     __table_args__ = (
@@ -86,6 +78,11 @@ class PartnerPolicy(BaseORMModelWithId):
     fetch_type: Mapped[str] = mapped_column(String(20), default=FetchType.oneshot.value)
     max_fetch_frequency: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     data_life: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+
+    # AWE approval correlation (set when this version is submitted for approval).
+    awe_request_id: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True, index=True
+    )
 
     effective_from: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True

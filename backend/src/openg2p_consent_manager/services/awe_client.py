@@ -82,7 +82,7 @@ class AweClient(BaseService):
             raise AweClientError(500, "awe_base_url is not configured")
 
         payload = {
-            "policy_key": _config.awe_partner_onboarding_policy_key,
+            "policy_key": _config.awe_policy_change_policy_key,
             "artifact_type": artifact_type,
             "artifact_id": artifact_id,
             "context": context,
@@ -120,6 +120,73 @@ class AweClient(BaseService):
         if not request_id:
             raise AweClientError(502, "AWE response missing request_id")
         return request_id
+
+    # ── Approver proxy (forwards the APPROVER's own JWT, not a service token) ──
+    # AWE has no approver UI — approvers act in CM's UI and CM proxies these calls
+    # with the approver's bearer so AWE's `sub`-based task ownership works.
+
+    async def _proxy(
+        self,
+        method: str,
+        path: str,
+        bearer: str,
+        *,
+        params: Optional[dict] = None,
+        json_body: Optional[dict] = None,
+    ):
+        if not _config.awe_base_url:
+            raise AweClientError(500, "awe_base_url is not configured")
+        url = f"{_config.awe_base_url.rstrip('/')}{path}"
+        try:
+            async with httpx.AsyncClient(timeout=_config.awe_http_timeout_seconds) as client:
+                resp = await client.request(
+                    method,
+                    url,
+                    params=params,
+                    json=json_body,
+                    headers={"Authorization": f"Bearer {bearer}"} if bearer else {},
+                )
+        except httpx.HTTPError as exc:
+            raise AweClientError(502, f"AWE unreachable: {exc}") from exc
+        if resp.status_code >= 300:
+            body = _safe_json(resp)
+            raise AweClientError(
+                resp.status_code, body.get("message", resp.text), body.get("error_code", "")
+            )
+        return _safe_json(resp)
+
+    async def list_my_tasks(
+        self,
+        bearer: str,
+        *,
+        status: Optional[str] = "open",
+        artifact_type: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 25,
+    ) -> dict:
+        params = {"assignee": "me", "page": page, "page_size": page_size}
+        if status:
+            params["status"] = status
+        if artifact_type:
+            params["artifact_type"] = artifact_type
+        return await self._proxy("GET", "/v1/awe/tasks", bearer, params=params)
+
+    async def submit_decision(
+        self, bearer: str, task_id: str, action: str, comment: Optional[str] = None
+    ) -> dict:
+        return await self._proxy(
+            "POST", f"/v1/awe/tasks/{task_id}/decision", bearer,
+            json_body={"action": action, "comment": comment},
+        )
+
+    async def claim_task(self, bearer: str, task_id: str) -> dict:
+        return await self._proxy("POST", f"/v1/awe/tasks/{task_id}/claim", bearer)
+
+    async def get_request(self, bearer: str, request_id: str) -> dict:
+        return await self._proxy("GET", f"/v1/awe/requests/{request_id}", bearer)
+
+    async def get_request_events(self, bearer: str, request_id: str):
+        return await self._proxy("GET", f"/v1/awe/requests/{request_id}/events", bearer)
 
 
 def _safe_json(resp: httpx.Response) -> dict:

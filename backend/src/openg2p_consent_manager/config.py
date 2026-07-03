@@ -109,22 +109,30 @@ class Settings(BaseSettings):
     # Default subject id-type when a token omits the subject_id_type claim.
     subject_default_id_type: str = "national_id"
 
+    # Role required to act on AWE approval tasks via CM's proxy/inbox. Approvers
+    # log into CM (not AWE) and CM proxies task-list/decision calls to AWE with
+    # the approver's own JWT.
+    auth_approver_role: str = "CONSENT_MANAGER_APPROVER"
+
     # ── Approval Workflow Engine (AWE) integration ──────────────────────────
-    # Partner onboarding (and, later, policy-widening) is gated behind human
-    # approval in the shared, per-environment AWE. CM is a *caller service*: it
-    # submits an approval request on onboarding and flips the partner to active
-    # only when AWE delivers a terminal `request_approved` webhook. Approvals
-    # themselves happen in AWE's own UI — CM never renders an approver inbox.
+    # Widening a partner's data-share POLICY is gated behind human approval in the
+    # shared, per-environment AWE. CM is a *caller service*: on a widening it
+    # submits an approval request and keeps the new policy version `pending`,
+    # flipping it `active` only when AWE delivers a terminal `request_approved`
+    # webhook. Approvers act in CM's OWN UI — CM proxies AWE's task-list/decision
+    # endpoints with the approver's JWT (AWE has no approver UI, only /admin).
     #
-    # When awe_enabled is false (default), onboarding is immediate (status
-    # active, approval_status not_required) — unchanged legacy behaviour.
+    # When awe_enabled is false (default), a widening policy activates immediately
+    # (no approval gate) — legacy behaviour.
     awe_enabled: bool = False
     # Base URL of the environment's AWE, reachable from CM pods (e.g.
     # https://awe.<baseDomain>). No trailing slash needed.
     awe_base_url: str = ""
     awe_http_timeout_seconds: float = 30.0
-    # AWE policy that governs partner onboarding. Registered in AWE out-of-band.
-    awe_partner_onboarding_policy_key: str = "consent-manager.partner_onboarding.v1"
+    # AWE approval policy (workflow: stages/approvers/SLA) that governs data-share
+    # policy changes. Registered in AWE out-of-band. NB: distinct from CM's own
+    # data-share policy — this is the *approval* policy key.
+    awe_policy_change_policy_key: str = "consent-manager.policy_change.v1"
     # CM→AWE service auth: Keycloak client-credentials. The fetched bearer is
     # sent on POST /v1/awe/requests. If awe_static_token is set it is used
     # verbatim instead (dev/testing).

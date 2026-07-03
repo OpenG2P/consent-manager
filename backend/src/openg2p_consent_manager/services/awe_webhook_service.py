@@ -97,16 +97,18 @@ class AweWebhookService(BaseService):
             return "ignored"
 
         approved = event_type in _APPROVE_EVENTS
-        updated = await self.partners.apply_onboarding_decision(
+        # artifact_id is the pending PartnerPolicy version id; request_id is the
+        # AWE request. Applying the decision activates or rejects that version.
+        updated = await self.partners.apply_policy_decision(
             awe_request_id=request_id,
             artifact_id=artifact_id,
             approved=approved,
         )
         if not updated:
             # Roll back the idempotency claim so a genuine retry can succeed once
-            # the correlating partner exists.
+            # the correlating policy version exists.
             await self._release_event(event_id)
-            raise WebhookError(422, f"No partner for AWE request {request_id or artifact_id}")
+            raise WebhookError(422, f"No policy for AWE request {request_id or artifact_id}")
 
         return "approved" if approved else "rejected"
 

@@ -7,6 +7,7 @@ from openg2p_fastapi_common.controller import BaseController
 
 from ..auth import require_role
 from ..config import Settings
+from ..models import PolicyStatus
 from ..schemas.partner import (
     PartnerCreate,
     PartnerResponse,
@@ -24,14 +25,15 @@ _NOT_FOUND = JSONResponse(status_code=404, content={"error": "not_found"})
 
 
 class PartnerController(BaseController):
-    """Administrative partner onboarding and policy management.
+    """Administrative policy-binding + data-share-policy management.
 
-    Partner signing keys are NOT managed here — they are owned by the Partner
-    Management service and fetched from its key API at verification time. CM only
-    stores the partner's PM reference (partner_mgmt_id).
+    A "partner" here is a policy BINDING: partner identity, lifecycle and signing
+    keys are owned by the Partner Management service (CM stores only the PM
+    reference `partner_mgmt_id` and fetches keys at verification time). Widening a
+    binding's data-share policy is gated behind AWE approval (see upsert_policy).
     """
 
-    # TODO(partner-delete): add a SOFT delete for partners (audit-safe).
+    # TODO(partner-delete): add a SOFT delete for bindings (audit-safe).
     #   A partner is referenced by ConsentArtefact / ConsentReceipt / ConsentRequest
     #   / DecisionLog / AuditLog, so it must NEVER be hard-deleted — that would
     #   orphan the audit trail and break non-repudiation. Plan:
@@ -76,6 +78,10 @@ class PartnerController(BaseController):
             "/{partner_id}/policy", self.get_policy, dependencies=admin,
             responses={200: {"model": PolicyResponse}}, methods=["GET"],
         )
+        self.router.add_api_route(
+            "/{partner_id}/policies", self.list_policies, dependencies=admin,
+            responses={200: {"model": list[PolicyResponse]}}, methods=["GET"],
+        )
 
     async def list_partners(
         self,
@@ -86,39 +92,8 @@ class PartnerController(BaseController):
         return [PartnerResponse.model_validate(p) for p in partners]
 
     async def create_partner(self, data: PartnerCreate):
+        # A binding is created active; partner identity onboarding is PM's job.
         partner = await self.partners.create_partner(data)
-
-        # When onboarding is gated, submit an approval request to the shared AWE.
-        # The partner stays suspended+pending until AWE delivers a terminal
-        # webhook. If AWE is unreachable we surface 502 but keep the pending
-        # partner row (no awe_request_id) so onboarding can be resubmitted.
-        if _config.awe_enabled:
-            context = {
-                "partner_name": partner.name,
-                "org_name": partner.org_name,
-                "controller_id": partner.controller_id,
-                "audience": partner.audience,
-                "partner_mgmt_id": partner.partner_mgmt_id,
-            }
-            try:
-                request_id = await self.awe.create_request(
-                    artifact_type="consent_manager.partner_onboarding",
-                    artifact_id=partner.id,
-                    context=context,
-                )
-                await self.partners.set_awe_request_id(partner.id, request_id)
-                partner.awe_request_id = request_id
-            except AweClientError as exc:
-                _logger.error("AWE onboarding submit failed for %s: %s", partner.id, exc)
-                return JSONResponse(
-                    status_code=502,
-                    content={
-                        "error": "awe_submit_failed",
-                        "message": exc.message,
-                        "partner_id": partner.id,
-                    },
-                )
-
         return PartnerResponse.model_validate(partner)
 
     async def get_partner(self, partner_id: str):
@@ -134,9 +109,45 @@ class PartnerController(BaseController):
         return PartnerResponse.model_validate(partner)
 
     async def upsert_policy(self, partner_id: str, data: PolicyUpsert):
+        partner = await self.partners.get_partner(partner_id)
+        if partner is None:
+            return _NOT_FOUND
         policy = await self.partners.upsert_policy(partner_id, data)
         if policy is None:
             return _NOT_FOUND
+
+        # A widening policy comes back `pending` — submit it to AWE for approval.
+        # It stays pending (the prior active policy remains in force) until AWE's
+        # terminal webhook activates it. If AWE is unreachable, surface 502 but
+        # keep the pending version so it can be resubmitted.
+        if policy.status == PolicyStatus.pending.value:
+            context = {
+                "partner_label": partner.name or partner.partner_mgmt_id or partner.audience,
+                "partner_mgmt_id": partner.partner_mgmt_id,
+                "controller_id": partner.controller_id,
+                "policy_version": policy.version,
+                "allowed_data_scopes": policy.allowed_data_scopes,
+                "allowed_purposes": policy.allowed_purposes,
+            }
+            try:
+                request_id = await self.awe.create_request(
+                    artifact_type="consent_manager.policy_change",
+                    artifact_id=policy.id,
+                    context=context,
+                )
+                await self.partners.set_policy_awe_request_id(policy.id, request_id)
+                policy.awe_request_id = request_id
+            except AweClientError as exc:
+                _logger.error("AWE policy-change submit failed for %s: %s", policy.id, exc)
+                return JSONResponse(
+                    status_code=502,
+                    content={
+                        "error": "awe_submit_failed",
+                        "message": exc.message,
+                        "policy_id": policy.id,
+                    },
+                )
+
         return PolicyResponse.model_validate(policy)
 
     async def get_policy(self, partner_id: str, version: Optional[int] = Query(None)):
@@ -144,3 +155,9 @@ class PartnerController(BaseController):
         if policy is None:
             return _NOT_FOUND
         return PolicyResponse.model_validate(policy)
+
+    async def list_policies(self, partner_id: str):
+        policies = await self.partners.list_policies(partner_id)
+        if policies is None:
+            return _NOT_FOUND
+        return [PolicyResponse.model_validate(p) for p in policies]

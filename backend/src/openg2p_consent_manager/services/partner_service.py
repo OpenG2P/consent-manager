@@ -8,91 +8,45 @@ from sqlalchemy import func, select
 from ..config import Settings
 from ..db import async_session
 from ..models import (
-    ApprovalStatus,
     Partner,
     PartnerPolicy,
     PartnerStatus,
     PolicyStatus,
 )
-from ..utils import TTLCache
+from ..utils import TTLCache, iso_duration_to_timedelta
 
 _config = Settings.get_config()
 _logger = logging.getLogger(_config.logging_default_logger_name)
 
 
 class PartnerService(BaseService):
-    """Partner onboarding (admin) plus the cached lookups the hot path needs."""
+    """Partner *policy bindings* (admin) plus the cached lookups the hot path
+    needs. Partner identity + keys live in Partner Management; a row here binds a
+    PM partner to a controller and a versioned data-share policy."""
 
     def __init__(self, name="", **kwargs):
         super().__init__(name, **kwargs)
         self._cache = TTLCache(_config.partner_cache_ttl_sec)
 
-    # ── Admin: partners ──────────────────────────────────────────────────────
+    # ── Admin: bindings ──────────────────────────────────────────────────────
 
     async def create_partner(self, data) -> Partner:
-        # When AWE onboarding approval is enabled, the partner is born suspended
-        # + pending — it must NOT validate consents until AWE approves. The
-        # verification hot path filters status==active, so keeping status
-        # suspended is what actually enforces the gate; approval_status carries
-        # the human-facing state. When AWE is disabled, onboarding is immediate.
-        gated = _config.awe_enabled
+        # A binding is created active. Partner *identity* onboarding/approval is
+        # Partner Management's concern; CM only gates data-share POLICY widening
+        # (see upsert_policy). A binding with no policy simply denies everything
+        # until a policy is set.
         async with async_session()() as session:
             partner = Partner(
                 name=data.name,
-                org_name=data.org_name,
                 audience=data.audience,
                 controller_id=data.controller_id,
                 partner_mgmt_id=data.partner_mgmt_id,
-                status=(
-                    PartnerStatus.suspended.value if gated else PartnerStatus.active.value
-                ),
-                approval_status=(
-                    ApprovalStatus.pending.value
-                    if gated
-                    else ApprovalStatus.not_required.value
-                ),
+                status=PartnerStatus.active.value,
             )
             session.add(partner)
             await session.commit()
             await session.refresh(partner)
             return partner
-
-    async def set_awe_request_id(self, partner_id: str, awe_request_id: str) -> None:
-        """Record the AWE request correlating to a partner's onboarding."""
-        async with async_session()() as session:
-            partner = await session.get(Partner, partner_id)
-            if partner is not None:
-                partner.awe_request_id = awe_request_id
-                await session.commit()
-
-    async def apply_onboarding_decision(
-        self, awe_request_id: str, artifact_id: str, approved: bool
-    ) -> bool:
-        """Flip a partner's onboarding gate from a terminal AWE webhook. Matches
-        the partner by AWE request id (preferred) or the artifact id (== partner
-        id) as a fallback. Returns False if no partner correlates."""
-        async with async_session()() as session:
-            partner = None
-            if awe_request_id:
-                result = await session.execute(
-                    select(Partner).where(Partner.awe_request_id == awe_request_id)
-                )
-                partner = result.scalars().first()
-            if partner is None and artifact_id:
-                partner = await session.get(Partner, artifact_id)
-            if partner is None:
-                return False
-
-            if approved:
-                partner.status = PartnerStatus.active.value
-                partner.approval_status = ApprovalStatus.approved.value
-            else:
-                partner.status = PartnerStatus.suspended.value
-                partner.approval_status = ApprovalStatus.rejected.value
-            audience = partner.audience
-            await session.commit()
-        self._invalidate(audience)
-        return True
 
     async def get_partner(self, partner_id: str) -> Optional[Partner]:
         async with async_session()() as session:
@@ -118,7 +72,7 @@ class PartnerService(BaseService):
             partner = await session.get(Partner, partner_id)
             if partner is None:
                 return None
-            for field in ("name", "org_name", "status", "partner_mgmt_id"):
+            for field in ("name", "status", "partner_mgmt_id"):
                 value = getattr(data, field, None)
                 if value is not None:
                     setattr(partner, field, value)
@@ -130,26 +84,47 @@ class PartnerService(BaseService):
     # ── Admin: policy (versioned) ────────────────────────────────────────────
 
     async def upsert_policy(self, partner_id: str, data) -> Optional[PartnerPolicy]:
+        """Create a new data-share policy version.
+
+        If AWE approval is enabled AND the change *widens* access relative to the
+        current active policy (or is the first policy), the new version is created
+        ``pending`` and does NOT supersede the active one — the caller submits it
+        to AWE and it only goes active on approval. A non-widening change (or AWE
+        disabled) activates immediately, superseding the prior active version.
+        """
         async with async_session()() as session:
             partner = await session.get(Partner, partner_id)
             if partner is None:
                 return None
-            # Supersede the current active policy and bump the version.
+
             result = await session.execute(
                 select(PartnerPolicy)
                 .where(PartnerPolicy.partner_id == partner_id)
                 .order_by(PartnerPolicy.version.desc())
             )
-            existing = result.scalars().all()
+            existing = list(result.scalars().all())
+            active = next(
+                (p for p in existing if p.status == PolicyStatus.active.value), None
+            )
             next_version = (existing[0].version + 1) if existing else 1
-            for old in existing:
-                if old.status == PolicyStatus.active.value:
-                    old.status = PolicyStatus.superseded.value
+
+            gated = _config.awe_enabled and self._is_widening(data, active)
+
+            if gated:
+                status = PolicyStatus.pending.value
+                effective_from = None
+                # Do NOT supersede the active policy — it stays in force until
+                # this pending version is approved.
+            else:
+                status = PolicyStatus.active.value
+                effective_from = datetime.now(timezone.utc)
+                if active is not None:
+                    active.status = PolicyStatus.superseded.value
 
             policy = PartnerPolicy(
                 partner_id=partner_id,
                 version=next_version,
-                status=PolicyStatus.active.value,
+                status=status,
                 allowed_data_scopes=data.allowed_data_scopes,
                 allowed_purposes=data.allowed_purposes,
                 allowed_subject_id_types=data.allowed_subject_id_types,
@@ -158,14 +133,85 @@ class PartnerService(BaseService):
                 fetch_type=data.fetch_type,
                 max_fetch_frequency=data.max_fetch_frequency,
                 data_life=data.data_life,
-                effective_from=datetime.now(timezone.utc),
+                effective_from=effective_from,
             )
             session.add(policy)
             await session.commit()
             await session.refresh(policy)
             audience = partner.audience
-        self._invalidate(audience)
+
+        if not gated:
+            self._invalidate(audience)  # active policy changed
         return policy
+
+    async def set_policy_awe_request_id(self, policy_id: str, awe_request_id: str) -> None:
+        async with async_session()() as session:
+            policy = await session.get(PartnerPolicy, policy_id)
+            if policy is not None:
+                policy.awe_request_id = awe_request_id
+                await session.commit()
+
+    async def apply_policy_decision(
+        self, awe_request_id: str, artifact_id: str, approved: bool
+    ) -> bool:
+        """Apply a terminal AWE decision to a pending policy version. On approve,
+        activate it and supersede the prior active version for that partner; on
+        reject, mark it rejected. Matches by AWE request id, else artifact id
+        (== policy id). Returns False if no pending policy correlates."""
+        async with async_session()() as session:
+            policy = None
+            if awe_request_id:
+                res = await session.execute(
+                    select(PartnerPolicy).where(
+                        PartnerPolicy.awe_request_id == awe_request_id
+                    )
+                )
+                policy = res.scalars().first()
+            if policy is None and artifact_id:
+                policy = await session.get(PartnerPolicy, artifact_id)
+            if policy is None:
+                return False
+            # Idempotent: a re-delivered webhook for an already-decided version.
+            if policy.status != PolicyStatus.pending.value:
+                partner = await session.get(Partner, policy.partner_id)
+                if partner:
+                    self._invalidate(partner.audience)
+                return True
+
+            if approved:
+                # Supersede whatever is currently active for this partner.
+                res = await session.execute(
+                    select(PartnerPolicy).where(
+                        PartnerPolicy.partner_id == policy.partner_id,
+                        PartnerPolicy.status == PolicyStatus.active.value,
+                    )
+                )
+                for old in res.scalars().all():
+                    old.status = PolicyStatus.superseded.value
+                policy.status = PolicyStatus.active.value
+                policy.effective_from = datetime.now(timezone.utc)
+            else:
+                policy.status = PolicyStatus.rejected.value
+
+            partner = await session.get(Partner, policy.partner_id)
+            audience = partner.audience if partner else None
+            await session.commit()
+        if audience:
+            self._invalidate(audience)
+        return True
+
+    async def list_policies(self, partner_id: str) -> Optional[list]:
+        """All policy versions for a binding, newest first. None if no binding."""
+        async with async_session()() as session:
+            partner = await session.get(Partner, partner_id)
+            if partner is None:
+                return None
+            result = await session.execute(
+                select(PartnerPolicy)
+                .where(PartnerPolicy.partner_id == partner_id)
+                .order_by(PartnerPolicy.version.desc())
+            )
+            return list(result.scalars().all())
 
     async def get_policy(
         self, partner_id: str, version: Optional[int] = None
@@ -180,6 +226,49 @@ class PartnerService(BaseService):
                 )
             result = await session.execute(query)
             return result.scalars().first()
+
+    # ── Widening detection (drives whether AWE approval is required) ──────────
+
+    @staticmethod
+    def _is_widening(data, active: Optional[PartnerPolicy]) -> bool:
+        """True if `data` grants anything the current active policy did not — a
+        larger allowed set, or a longer validity/data-life. The first policy
+        (no active prior) counts as a widening (a grant from nothing)."""
+        if active is None:
+            return True
+        for field in (
+            "allowed_data_scopes",
+            "allowed_purposes",
+            "allowed_subject_id_types",
+            "allowed_signing_algs",
+        ):
+            new_set = set(getattr(data, field, None) or [])
+            old_set = set(getattr(active, field, None) or [])
+            if new_set - old_set:
+                return True
+        if PartnerService._duration_loosened(
+            data.max_validity_duration, active.max_validity_duration
+        ):
+            return True
+        if PartnerService._duration_loosened(data.data_life, active.data_life):
+            return True
+        return False
+
+    @staticmethod
+    def _duration_loosened(new: Optional[str], old: Optional[str]) -> bool:
+        """True if ISO-8601 duration `new` permits a LONGER window than `old`.
+        None means "no cap" (widest). On a parse error, err toward requiring
+        approval (return True)."""
+        if new == old:
+            return False
+        if new is None:  # removed the cap → wider
+            return old is not None
+        if old is None:  # added a cap → narrower
+            return False
+        try:
+            return iso_duration_to_timedelta(new) > iso_duration_to_timedelta(old)
+        except Exception:
+            return True
 
     # ── Hot path: cached verification material ───────────────────────────────
 

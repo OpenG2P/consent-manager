@@ -19,6 +19,8 @@ global:
   consentManagerAuthEnabled: true
   consentManagerAuthClientId: consent-manager
   consentManagerAdminRole: CONSENT_MANAGER_ADMIN
+  # Role required to act on AWE policy-approval tasks via CM's inbox/proxy.
+  consentManagerApproverRole: CONSENT_MANAGER_APPROVER
 
   # ── Partner Management (partner signing keys) ───────────────────────────
   # Partner public keys are owned by the shared Partner Management (PM) service.
@@ -87,12 +89,17 @@ keycloak-init:
             # Required by partner/policy admin endpoints. Must match
             # global.consentManagerAdminRole.
             - CONSENT_MANAGER_ADMIN
+            # Required to act on AWE policy-approval tasks via CM's inbox.
+            # Grant to approver users (see users[] mappings below).
+            - CONSENT_MANAGER_APPROVER
       users:
-        # First-install operator can administer partners/policies from the UI/CLI.
+        # First-install operator can administer partners/policies AND act on
+        # policy-approval tasks from the UI/CLI.
         - username: admin
           clientRoleMappings:
             consent-manager:
               - CONSENT_MANAGER_ADMIN
+              - CONSENT_MANAGER_APPROVER
         # The client's own service account gets admin too, so client-credentials
         # tokens from `consent-manager` can drive partner onboarding automation.
         - username: service-account-consent-manager
@@ -218,6 +225,7 @@ consentManagerApi:
     CONSENT_MANAGER_AUTH_ISSUER: '{{ tpl .Values.global.keycloakIssuerUrl $ }}'
     CONSENT_MANAGER_AUTH_JWKS_URL: '{{ tpl .Values.global.keycloakIssuerUrl $ }}/protocol/openid-connect/certs'
     CONSENT_MANAGER_AUTH_ADMIN_ROLE: '{{ tpl .Values.global.consentManagerAdminRole $ }}'
+    CONSENT_MANAGER_AUTH_APPROVER_ROLE: '{{ tpl .Values.global.consentManagerApproverRole $ }}'
     # Partner Management key API — source of partner signing keys.
     CONSENT_MANAGER_PARTNER_MGMT_API_URL: '{{ tpl .Values.global.partnerManagementApiUrl $ }}'
     # In demo mode, force a distinctive kid so any receipt / JWKS makes it obvious

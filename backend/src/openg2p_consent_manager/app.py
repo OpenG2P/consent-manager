@@ -89,29 +89,14 @@ class Initializer(BaseInitializer):
                 await model.create_migrate()
 
             # create_migrate() only creates missing tables; it does not ALTER an
-            # existing one. Add the AWE onboarding columns idempotently so a DB
-            # created before the AWE integration picks them up on next migrate.
+            # existing one. Apply idempotent column changes so a DB created under
+            # an earlier schema picks up the current shape on next migrate.
             from openg2p_fastapi_common.context import dbengine
             from sqlalchemy import text
 
             async with dbengine.get().begin() as conn:
-                await conn.execute(
-                    text(
-                        "ALTER TABLE partners ADD COLUMN IF NOT EXISTS "
-                        "approval_status VARCHAR(20) NOT NULL DEFAULT 'not_required'"
-                    )
-                )
-                await conn.execute(
-                    text("ALTER TABLE partners ADD COLUMN IF NOT EXISTS awe_request_id VARCHAR(64)")
-                )
-                await conn.execute(
-                    text(
-                        "CREATE INDEX IF NOT EXISTS ix_partners_awe_request_id "
-                        "ON partners (awe_request_id)"
-                    )
-                )
-                # Partner keys moved to Partner Management — partners now carry a
-                # PM reference instead of local keys / a jwks_url.
+                # Partner is now a policy binding: keys + identity live in Partner
+                # Management. Carry a PM reference; identity/onboarding fields go.
                 await conn.execute(
                     text(
                         "ALTER TABLE partners ADD COLUMN IF NOT EXISTS "
@@ -122,6 +107,26 @@ class Initializer(BaseInitializer):
                     text(
                         "CREATE INDEX IF NOT EXISTS ix_partners_partner_mgmt_id "
                         "ON partners (partner_mgmt_id)"
+                    )
+                )
+                # name is now an optional display label; org_name + the old
+                # partner-onboarding approval columns are gone (approval moved
+                # onto the policy version).
+                await conn.execute(text("ALTER TABLE partners ALTER COLUMN name DROP NOT NULL"))
+                await conn.execute(text("ALTER TABLE partners DROP COLUMN IF EXISTS org_name"))
+                await conn.execute(text("ALTER TABLE partners DROP COLUMN IF EXISTS approval_status"))
+                await conn.execute(text("ALTER TABLE partners DROP COLUMN IF EXISTS awe_request_id"))
+                # AWE approval now correlates to a policy version.
+                await conn.execute(
+                    text(
+                        "ALTER TABLE partner_policies ADD COLUMN IF NOT EXISTS "
+                        "awe_request_id VARCHAR(64)"
+                    )
+                )
+                await conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_partner_policies_awe_request_id "
+                        "ON partner_policies (awe_request_id)"
                     )
                 )
             _logger.info("Database migration complete")
