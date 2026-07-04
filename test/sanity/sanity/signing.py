@@ -42,20 +42,23 @@ def load_private_key_pem(pem: str):
     return serialization.load_pem_private_key(pem.encode("utf-8"), password=None)
 
 
-def sign_object(obj_without_signature: dict, priv, kid: str, algorithm: str = "EdDSA") -> dict:
-    from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.asymmetric import ec, padding
+def sign_jws(claims: dict, priv, kid: str, algorithm: str = "EdDSA") -> str:
+    """Sign consent claims as a self-contained compact JWS (header.payload.sig).
 
-    msg = canonical_bytes(obj_without_signature)
-    if algorithm == "EdDSA":
-        sig = priv.sign(msg)
-    elif algorithm == "ES256":
-        sig = priv.sign(msg, ec.ECDSA(hashes.SHA256()))
-    elif algorithm == "RS256":
-        sig = priv.sign(msg, padding.PKCS1v15(), hashes.SHA256())
-    else:
-        raise ValueError(f"unsupported signing algorithm: {algorithm!r}")
-    return {"algorithm": algorithm, "kid": kid, "value": b64url_encode(sig)}
+    Uses PyJWT's PyJWS — the SAME primitive the Consent Manager verifies with
+    (via openg2p-fastapi-common's CryptoHelper) — so the round-trip is exact.
+    """
+    from jwt.api_jws import PyJWS
+
+    payload = canonical_bytes(claims)
+    return PyJWS().encode(payload, priv, algorithm=algorithm, headers={"kid": kid})
+
+
+def tamper_jws_payload(jws: str, new_claims: dict) -> str:
+    """Return a JWS whose payload is swapped for ``new_claims`` but which keeps
+    the original signature — i.e. a forgery that must fail verification."""
+    header_b64, _payload_b64, sig_b64 = jws.split(".")
+    return f"{header_b64}.{b64url_encode(canonical_bytes(new_claims))}.{sig_b64}"
 
 
 def _public_key_from_jwk(jwk: dict):

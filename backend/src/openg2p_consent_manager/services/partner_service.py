@@ -278,7 +278,8 @@ class PartnerService(BaseService):
 
         Partner public keys are NOT included here: they are owned by the Partner
         Management service and fetched separately (and cached with their own
-        discipline) via PartnerMgmtKeyStore, keyed by the partner's
+        discipline) by the shared fastapi-common CryptoHelper (partner-mgmt
+        backend) during consent-JWS verification, keyed by the partner's
         ``partner_mgmt_id``. This method only resolves the onboarded party +
         policy. Returns None if the partner is unknown or suspended.
 

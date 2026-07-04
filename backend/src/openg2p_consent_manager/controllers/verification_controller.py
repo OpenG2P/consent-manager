@@ -45,18 +45,19 @@ class VerificationController(BaseController):
         )
 
     async def validate(self, payload: dict = Body(...)) -> Decision:
-        # Parse defensively so a malformed object is a clean deny, not a 422.
+        # Parse defensively so a malformed request is a clean deny, not a 422.
+        # The consent object itself is a compact JWS (consent_jws); its claims
+        # and signature are validated inside the verification service.
         try:
             parsed = ValidateRequest(**payload)
         except ValidationError as exc:
-            _logger.info("Malformed consent object: %s", exc)
+            _logger.info("Malformed validate request: %s", exc)
             return Decision(
                 decision="deny", reason_code=ReasonCode.malformed_object,
-                detail="consent object failed schema validation",
+                detail="validate request failed schema validation",
                 evaluated_at=datetime.now(timezone.utc),
             )
-        raw_consent_object = payload.get("consent_object", {})
-        return await self.verification.validate(parsed, raw_consent_object)
+        return await self.verification.validate(parsed)
 
     async def get_status(self, consent_id: str):
         result = await self.consents.get_status(consent_id)

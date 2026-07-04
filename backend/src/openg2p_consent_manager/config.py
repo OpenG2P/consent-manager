@@ -89,6 +89,14 @@ class Settings(BaseSettings):
     # Empty partner_mgmt_api_url disables PM fetching — verification then fails
     # closed (no keys → deny), which is the correct safe default until wired.
     partner_mgmt_api_url: str = ""  # e.g. http://partner-management-partner-api:8000
+    # Crypto backend for verifying the partner's signed consent object (a compact
+    # JWS). "partner-mgmt" verifies against keys fetched from PM via the shared
+    # openg2p-fastapi-common CryptoHelper. "keymanager" (Mosip) and "local"
+    # (seed keys, tests) remain selectable but are not the default.
+    crypto_backend: str = "partner-mgmt"
+    # Algorithms accepted on the partner consent JWS. The fastapi-common default
+    # is "RS256" only; partners commonly use EdDSA/ES256, so widen it here.
+    crypto_allowed_algorithms: str = "EdDSA,ES256,RS256"
     # Soft TTL: refresh window. Bounds how long a rotated/revoked key stays
     # trusted. Capped by the response's Cache-Control max-age when smaller.
     partner_key_cache_ttl_seconds: int = 300

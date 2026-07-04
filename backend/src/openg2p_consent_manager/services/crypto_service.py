@@ -1,7 +1,6 @@
 import logging
 import os
 
-from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa
 from cryptography.hazmat.primitives.asymmetric.ec import ECDSA
@@ -9,7 +8,7 @@ from cryptography.hazmat.primitives.serialization import pkcs12
 from openg2p_fastapi_common.service import BaseService
 
 from ..config import Settings
-from ..utils.canonical import b64url_decode, b64url_encode
+from ..utils.canonical import b64url_encode
 
 _config = Settings.get_config()
 _logger = logging.getLogger(_config.logging_default_logger_name)
@@ -155,27 +154,6 @@ class CryptoService(BaseService):
             raise ValueError("Unsupported CM public key type")
         return {"keys": [jwk]}
 
-    # ── Partner signature verification ───────────────────────────────────────
-
-    def verify(
-        self, public_key_pem: str, algorithm: str, message: bytes, signature_b64url: str
-    ) -> bool:
-        """Verify a partner signature over canonical message bytes."""
-        try:
-            pub = serialization.load_pem_public_key(public_key_pem.encode("utf-8"))
-            sig = b64url_decode(signature_b64url)
-            if algorithm == ALG_EDDSA:
-                pub.verify(sig, message)
-            elif algorithm == ALG_ES256:
-                pub.verify(sig, message, ECDSA(hashes.SHA256()))
-            elif algorithm == ALG_RS256:
-                pub.verify(sig, message, padding.PKCS1v15(), hashes.SHA256())
-            else:
-                _logger.warning("Unsupported signature algorithm: %s", algorithm)
-                return False
-            return True
-        except InvalidSignature:
-            return False
-        except Exception as exc:  # malformed key/signature
-            _logger.warning("Signature verification error: %s", exc)
-            return False
+    # Partner consent-object verification now lives in the shared
+    # openg2p-fastapi-common CryptoHelper (partner-mgmt backend); see
+    # VerificationService. This service only signs CM receipts + publishes JWKS.

@@ -1,15 +1,9 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from .common import ReasonCode, SubjectId
-
-
-class ConsentObjectSignature(BaseModel):
-    algorithm: str = Field(..., examples=["EdDSA"])
-    kid: str
-    value: str  # base64url signature over the canonical object (sans signature)
 
 
 class ConsentObjectValidity(BaseModel):
@@ -18,7 +12,12 @@ class ConsentObjectValidity(BaseModel):
 
 
 class ConsentObject(BaseModel):
-    """The partner-signed JSON-LD object embedded in a registry request."""
+    """The partner's consent claims — the *payload* of the consent JWS.
+
+    The signature is NOT a field here: the whole object is signed as a compact
+    JWS (RFC 7515) and these are the claims recovered from its payload. The JWS
+    protected header carries the ``alg`` and ``kid`` used to verify it.
+    """
 
     jti: str
     subject_id: SubjectId
@@ -29,7 +28,6 @@ class ConsentObject(BaseModel):
     fetch_type: str = "oneshot"
     validity: ConsentObjectValidity
     issued_at: datetime
-    signature: ConsentObjectSignature
 
     # Tolerate JSON-LD framing keys (@context/@type) and any extra attributes.
     model_config = {"extra": "allow"}
@@ -41,8 +39,11 @@ class RequestContext(BaseModel):
 
 
 class ValidateRequest(BaseModel):
-    consent_object: ConsentObject
-    partner_id: str
+    # The partner-signed consent object, as a compact JWS (header.payload.sig).
+    # CM recovers the claims from the payload and verifies the signature against
+    # the partner's Partner-Management key referenced by the JWS ``kid``.
+    consent_jws: str
+    partner_id: Optional[str] = None
     request_context: Optional[RequestContext] = None
 
 

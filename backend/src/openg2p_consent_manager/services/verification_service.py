@@ -1,8 +1,10 @@
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from openg2p_fastapi_common.service import BaseService
+from openg2p_fastapi_common.utils.crypto import build_crypto_helper
 from sqlalchemy import select
 
 from ..config import Settings
@@ -14,10 +16,8 @@ from ..models import (
     DecisionLog,
 )
 from ..schemas.common import ReasonCode
-from ..schemas.verification import Decision, ValidateRequest
-from ..utils.canonical import canonical_bytes, sha256_hex
-from .crypto_service import CryptoService
-from .partner_key_store import PartnerMgmtKeyStore
+from ..schemas.verification import ConsentObject, Decision, ValidateRequest
+from ..utils.canonical import b64url_decode, sha256_hex
 from .partner_service import PartnerService
 from .policy_service import PolicyService
 from .receipt_service import ReceiptService
@@ -36,22 +36,49 @@ class VerificationService(BaseService):
     def __init__(self, name="", **kwargs):
         super().__init__(name, **kwargs)
         self.partners = PartnerService.get_component()
-        self.keys = PartnerMgmtKeyStore.get_component()
-        self.crypto = CryptoService.get_component()
+        # Partner consent-JWS verification via the shared fastapi-common crypto
+        # helper (partner-mgmt backend fetches keys from Partner Management).
+        self.crypto_helper = build_crypto_helper(backend=_config.crypto_backend)
         self.policy = PolicyService.get_component()
         self.receipts = ReceiptService.get_component()
 
-    async def validate(self, parsed: ValidateRequest, raw_consent_object: dict) -> Decision:
+    @staticmethod
+    def _decode_jws(jws: str) -> tuple[dict, dict]:
+        """Return ``(claims, protected_header)`` from a compact JWS WITHOUT
+        verifying — used to identify the partner and read alg/kid before the
+        signature is checked. A permit is never issued on unverified claims."""
+        parts = jws.split(".")
+        if len(parts) != 3:
+            raise ValueError("consent_jws is not a compact JWS (expected header.payload.signature)")
+        protected_header = json.loads(b64url_decode(parts[0]))
+        claims = json.loads(b64url_decode(parts[1]))
+        return claims, protected_header
+
+    async def validate(self, parsed: ValidateRequest) -> Decision:
         now = datetime.now(timezone.utc)
-        obj = parsed.consent_object
-        ctx_hash = sha256_hex(canonical_bytes(raw_consent_object))
+        jws = parsed.consent_jws
+        # The JWS string is itself canonical/immutable, so hash it directly.
+        ctx_hash = sha256_hex(jws.encode("utf-8"))
+
+        # Recover the claims from the JWS payload (unverified) so we can identify
+        # the partner and evaluate policy. The signature is verified below,
+        # before any permit is issued.
+        try:
+            claims, jws_header = self._decode_jws(jws)
+            obj = ConsentObject(**claims)
+        except Exception as exc:
+            _logger.info("Malformed consent JWS: %s", exc)
+            return await self._deny(
+                ReasonCode.malformed_object, "consent JWS could not be decoded",
+                now, ctx_hash,
+            )
 
         # Idempotency: the same object (jti) returns its existing decision.
         existing = await self._existing_artefact(obj.jti)
         if existing is not None:
             return self._decision_from_artefact(existing, now)
 
-        # 2. Known party — partner + keys + policy (cached).
+        # 2. Known party — partner + policy (cached).
         material = await self.partners.get_verification_material(obj.aud)
         if material is None:
             return await self._deny(
@@ -62,42 +89,27 @@ class VerificationService(BaseService):
         policy = material["policy"]
         policy_version = policy.version if policy else None
 
-        # 3. Signature — resolve the verifying key from Partner Management by the
-        # partner's PM reference (partner_mgmt_id, falling back to audience) and
-        # the object's kid, then check the algorithm is allowed and verify.
+        # 3. Signature — verify the consent JWS against the partner's key from
+        # Partner Management. The shared helper reads the kid from the JWS header,
+        # fetches the key for the partner's PM reference (partner_mgmt_id, falling
+        # back to audience), enforces algorithm safety, and verifies.
         reference_id = partner.partner_mgmt_id or partner.audience
-        key = await self.keys.get_key(reference_id, obj.signature.kid)
-        if key is None:
-            return await self._deny(
-                ReasonCode.unknown_partner,
-                f"no verifying key for kid '{obj.signature.kid}' from partner management",
-                now, ctx_hash, partner_id=partner.id, jti=obj.jti,
-                policy_version=policy_version,
-            )
-        # Guard against algorithm confusion: the declared alg must match the key
-        # PM registered for this kid.
-        if key.get("algorithm") and obj.signature.algorithm != key["algorithm"]:
-            return await self._deny(
-                ReasonCode.signature_invalid, "signing algorithm does not match key",
-                now, ctx_hash, partner_id=partner.id, jti=obj.jti,
-                policy_version=policy_version,
-            )
-        if policy and policy.allowed_signing_algs and (
-            obj.signature.algorithm not in policy.allowed_signing_algs
-        ):
+        alg = jws_header.get("alg")
+        if policy and policy.allowed_signing_algs and alg not in policy.allowed_signing_algs:
             return await self._deny(
                 ReasonCode.signature_invalid, "signing algorithm not permitted",
                 now, ctx_hash, partner_id=partner.id, jti=obj.jti,
                 policy_version=policy_version,
             )
-        signing_input = canonical_bytes(
-            {k: v for k, v in raw_consent_object.items() if k != "signature"}
-        )
-        if not self.crypto.verify(
-            key["public_key"], obj.signature.algorithm, signing_input, obj.signature.value
-        ):
+        try:
+            verified = await self.crypto_helper.verify_jwt(jws, km_ref_id=reference_id)
+        except Exception as exc:
+            _logger.warning("Consent JWS verification error: %s", exc)
+            verified = False
+        if not verified:
             return await self._deny(
-                ReasonCode.signature_invalid, "signature did not verify",
+                ReasonCode.signature_invalid,
+                "signature did not verify (or no verifying key from partner management)",
                 now, ctx_hash, partner_id=partner.id, jti=obj.jti,
                 policy_version=policy_version,
             )

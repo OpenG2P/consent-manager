@@ -9,6 +9,8 @@ on:
     paths:
       - 'backend/**'
       - 'docker/**'
+      - 'ui/**'
+      - 'test/sanity/**'
       - '.github/workflows/docker-build.yml'
   workflow_dispatch:
     inputs:

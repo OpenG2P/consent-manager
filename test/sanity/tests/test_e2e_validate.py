@@ -3,15 +3,20 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from sanity.signing import load_private_key_pem, sign_object, verify_receipt_signature
+from sanity.signing import (
+    load_private_key_pem,
+    sign_jws,
+    tamper_jws_payload,
+    verify_receipt_signature,
+)
 
 # Full PDP round-trip. Partner signing keys now live in the Partner Management
 # (PM) service — CM fetches them at validate time and can no longer self-inject a
 # key. So the e2e onboards a CM partner whose ``partner_mgmt_id`` points at a
-# PM-seeded test partner, signs a consent object with the matching private key
-# (supplied via SANITY_PM_* env), and exercises permit + the key denials, then
-# verifies the CM receipt against its JWKS. Gated by SANITY_RUN_E2E and by the
-# presence of PM signing material.
+# PM-seeded test partner, signs the consent object as a compact JWS with the
+# matching private key (supplied via SANITY_PM_* env), and exercises permit + the
+# key denials, then verifies the CM receipt against its JWKS. Gated by
+# SANITY_RUN_E2E and by the presence of PM signing material.
 
 SCOPES = ["farmer_profile.basic", "farmer_profile.crops"]
 
@@ -58,9 +63,10 @@ def test_validate_roundtrip(client, partner_client, cfg, auth_headers, pm_partne
             pytest.skip("AWE approval enabled — policy is pending human approval; permit round-trip skipped")
 
         now = datetime.now(timezone.utc)
+        alg = _alg_for(priv)  # inferred from the PM-registered key
 
-        def signed_object(scopes):
-            obj = {
+        def make_claims(scopes):
+            return {
                 "@context": "https://openg2p.org/contexts/consent_object.jsonld",
                 "@type": "ConsentObject",
                 "jti": uuid.uuid4().hex,
@@ -74,14 +80,11 @@ def test_validate_roundtrip(client, partner_client, cfg, auth_headers, pm_partne
                 },
                 "issued_at": now.isoformat(),
             }
-            # The PM-registered key's algorithm is inferred from the loaded key.
-            obj["signature"] = sign_object(obj, priv, kid, algorithm=_alg_for(priv))
-            return obj
 
         # 2. permit — request a subset; effective = consented ∩ policy ∩ requested
-        obj = signed_object(SCOPES + ["farmer_profile.landholdings"])
+        jws = sign_jws(make_claims(SCOPES + ["farmer_profile.landholdings"]), priv, kid, algorithm=alg)
         r = partner_client.post("/consent/v1/validate", json={
-            "consent_object": obj, "partner_id": pid,
+            "consent_jws": jws, "partner_id": pid,
             "request_context": {"requested_scopes": SCOPES},
         })
         assert r.status_code == 200, r.text
@@ -99,18 +102,19 @@ def test_validate_roundtrip(client, partner_client, cfg, auth_headers, pm_partne
             jwks, sig["kid"], sig["algorithm"], msg, sig["value"]
         ), "CM receipt signature did not verify against the published JWKS"
 
-        # 4. denial — tampered signature
-        bad = signed_object(["farmer_profile.basic"])
-        bad["data_scopes"] = ["farmer_profile.crops"]  # mutate AFTER signing
+        # 4. denial — tampered JWS (payload swapped, original signature kept)
+        good_claims = make_claims(["farmer_profile.basic"])
+        good_jws = sign_jws(good_claims, priv, kid, algorithm=alg)
+        tampered = tamper_jws_payload(good_jws, {**good_claims, "data_scopes": ["farmer_profile.crops"]})
         d = partner_client.post("/consent/v1/validate", json={
-            "consent_object": bad, "partner_id": pid,
+            "consent_jws": tampered, "partner_id": pid,
         }).json()
         assert d["decision"] == "deny" and d["reason_code"] == "signature_invalid", d
 
         # 5. denial — scope outside policy
-        over = signed_object(["farmer_profile.landholdings"])
+        over_jws = sign_jws(make_claims(["farmer_profile.landholdings"]), priv, kid, algorithm=alg)
         d = partner_client.post("/consent/v1/validate", json={
-            "consent_object": over, "partner_id": pid,
+            "consent_jws": over_jws, "partner_id": pid,
         }).json()
         assert d["decision"] == "deny" and d["reason_code"] == "scope_exceeds_policy", d
 

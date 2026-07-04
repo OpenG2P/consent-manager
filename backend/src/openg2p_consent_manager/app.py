@@ -35,7 +35,6 @@ from .services import (
     ConsentService,
     CryptoService,
     LifecycleService,
-    PartnerMgmtKeyStore,
     PartnerService,
     PolicyService,
     ReceiptService,
@@ -53,7 +52,6 @@ class Initializer(BaseInitializer):
         # __init__ must be constructed after its dependencies.
         CryptoService()
         PartnerService()
-        PartnerMgmtKeyStore()
         PolicyService()
         ReceiptService()
         VerificationService()
