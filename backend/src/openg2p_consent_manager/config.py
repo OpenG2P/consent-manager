@@ -88,7 +88,7 @@ class Settings(BaseSettings):
     #
     # Empty partner_mgmt_api_url disables PM fetching — verification then fails
     # closed (no keys → deny), which is the correct safe default until wired.
-    partner_mgmt_api_url: str = ""  # e.g. http://partner-management-partner-api:8000
+    partner_mgmt_api_url: str = ""  # e.g. http://partner-management-partner-api:80
     # Crypto backend for verifying the partner's signed consent object (a compact
     # JWS). "partner-mgmt" verifies against keys fetched from PM via the shared
     # openg2p-fastapi-common CryptoHelper. "keymanager" (Mosip) and "local"
