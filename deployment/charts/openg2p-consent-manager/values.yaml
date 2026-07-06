@@ -28,16 +28,22 @@ global:
   consentManagerApproverRole: CONSENT_MANAGER_APPROVER
 
   # ── Partner Management (partner signing keys) ───────────────────────────
-  # Partner public keys are owned by the shared Partner Management (PM) service.
-  # CM fetches them from PM's unauthenticated key API at verification time. Point
-  # this at the environment's PM partner-api service. Empty => key fetching is
-  # disabled and verification fails closed (no keys → deny).
-  partnerManagementApiUrl: http://partner-management-partner-api
+  # Partner public keys are owned by the shared Partner Management (PM) service,
+  # now part of commons-services (service name commons-services-pm-*, matching
+  # the g2p-bridge chart). CM fetches keys from PM's unauthenticated key API at
+  # verification time. Empty => key fetching is disabled and verification fails
+  # closed (no keys → deny).
+  partnerManagementApiUrl: http://commons-services-pm-partner-api
   # PM's admin (staff-portal) API — used ONLY by the sanity e2e to seed a
-  # persistent test partner. Not used by the running service. The seed calls it
-  # with the consent-manager client token (SANITY_CLIENT_*), which must be
-  # granted the `partner_manager` role in the staff realm.
-  partnerManagementAdminApiUrl: http://partner-management-staff-portal-api
+  # persistent test partner. Not used by the running service.
+  partnerManagementAdminApiUrl: http://commons-services-pm-staff-portal-api
+  # Keycloak client the sanity seed authenticates AS to call PM's admin API. It
+  # must hold PM's `partner_manager` role — Partner Management provisions this
+  # client as `<pm-release>-staff-portal` and stores its secret in a K8s Secret
+  # of the SAME name (key `client_secret`). In the commons install that is
+  # `commons-services-staff-portal` (matches the g2p-bridge chart). This replaces
+  # the older approach of granting partner_manager to CM's own service account.
+  pmSeedClientId: commons-services-staff-portal
 
   # ── Approval Workflow Engine (AWE) — data-share policy approvals ────────
   # OPTIONAL add-on (OFF by default). When ON, CM gates policy WIDENING behind the
@@ -149,23 +155,17 @@ keycloak-init:
               - CONSENT_MANAGER_ADMIN
               - CONSENT_MANAGER_APPROVER
         # The client's own service account gets admin too, so client-credentials
-        # tokens from `consent-manager` can drive partner onboarding automation.
+        # tokens from `consent-manager` can drive CM's own admin automation.
         - username: service-account-consent-manager
           clientRoleMappings:
             consent-manager:
               - CONSENT_MANAGER_ADMIN
-            # PM's admin API requires the `partner_manager` role — a CLIENT role on
-            # PM's `partner-management-staff-portal` client (PM checks that client's
-            # roles). Granting it here lets this service account seed the sanity
-            # test partner in PM (and drive any partner-onboarding automation).
-            #
-            # REQUIRES Partner Management already installed in this realm (its
-            # keycloak-init creates that client + role first — CM depends on PM for
-            # partner keys anyway, so PM-first is expected). If you install CM
-            # WITHOUT PM, or your PM release name is not `partner-management`,
-            # remove/adjust this mapping (a missing client fails this init job).
-            partner-management-staff-portal:
-              - partner_manager
+            # NOTE: PM's `partner_manager` role is NO LONGER granted here. The
+            # sanity seed instead authenticates AS PM's own admin client
+            # (global.pmSeedClientId = commons-services-staff-portal), which
+            # already holds partner_manager — see the g2p-bridge pmSeedClientId
+            # pattern. This avoids referencing a PM Keycloak client from CM's
+            # keycloak-init (a missing client would fail this init job).
 
 # Admin console SPA (React → nginx), served on the SAME host as the staff API
 # (a single VirtualService routes /consent/ → staff API, / → this UI). Runtime

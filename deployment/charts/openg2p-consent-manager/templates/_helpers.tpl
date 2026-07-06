@@ -56,4 +56,15 @@ is bundled in the sanity image (TEST only); PM stores the derived public half.
   value: {{ tpl .Values.global.partnerManagementApiUrl $ | quote }}
 - name: SANITY_PM_ADMIN_URL
   value: {{ tpl .Values.global.partnerManagementAdminApiUrl $ | quote }}
+# Authenticate to PM's admin API AS PM's own admin client (holds partner_manager).
+- name: SANITY_PM_ADMIN_TOKEN_URL
+  value: "{{ tpl .Values.global.keycloakIssuerUrl $ }}/protocol/openid-connect/token"
+- name: SANITY_PM_ADMIN_CLIENT_ID
+  value: {{ tpl .Values.global.pmSeedClientId $ | quote }}
+- name: SANITY_PM_ADMIN_CLIENT_SECRET
+  valueFrom:
+    secretKeyRef:
+      name: {{ tpl .Values.global.pmSeedClientId $ | quote }}
+      key: client_secret
+      optional: true
 {{- end -}}
