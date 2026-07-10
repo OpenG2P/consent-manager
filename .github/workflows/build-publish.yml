@@ -1,0 +1,62 @@
+name: Build & Publish
+
+# Replaces docker-build.yml + helm-publish.yml.
+#
+# One workflow, not two: a backend-only change must republish the chart, or the
+# newest chart keeps pointing at the previous image. The old pair had disjoint
+# path filters, so that desync was routine.
+#
+# This file declares only what THIS repo contains. All versioning policy lives
+# in openg2p-packaging behind @v1 -- see that repo's ci/README.md.
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["**"]
+  workflow_dispatch:
+
+jobs:
+  build-publish:
+    uses: openg2p/openg2p-packaging/.github/workflows/build-publish.yml@v1
+    with:
+      images: |
+        [
+          {"name": "consent-manager-api",
+           "repo": "openg2p/openg2p-consent-manager",
+           "dockerfile": "docker/consent-manager-api/Dockerfile"},
+
+          {"name": "consent-manager-sanity",
+           "repo": "openg2p/openg2p-consent-manager-sanity",
+           "dockerfile": "docker/consent-manager-sanity/Dockerfile"},
+
+          {"name": "consent-manager-ui",
+           "repo": "openg2p/openg2p-consent-manager-ui",
+           "dockerfile": "ui/Dockerfile",
+           "context": "ui"}
+        ]
+
+      chart-path: deployment/charts/openg2p-consent-manager
+
+      # Every OpenG2P image the chart deploys. jbergknoff/postgresql-client is
+      # third-party and stays pinned in values.yaml (by digest, ideally).
+      chart-image-paths: |
+        [".ui.image.tag",
+         ".consentManagerApi.image.tag",
+         ".sanity.image.tag"]
+
+      # docker/consent-manager-api/Dockerfile pip-installs openg2p-fastapi-common
+      # from a git ref. `develop` is a BRANCH: without resolving it to a SHA,
+      # two builds of the same commit produce different images.
+      pin-git-refs: |
+        [
+          {"arg": "FASTAPI_COMMON_REF",
+           "repo": "https://github.com/openg2p/openg2p-fastapi-common",
+           "ref": "develop"}
+        ]
+
+      packaging-ref: v1
+
+    secrets:
+      docker_hub_actor: ${{ secrets.docker_hub_actor }}
+      docker_hub_token: ${{ secrets.docker_hub_token }}
+      OPENG2P_BOT_GITHUB_PAT: ${{ secrets.OPENG2P_BOT_GITHUB_PAT }}
