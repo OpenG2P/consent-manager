@@ -14,11 +14,22 @@ on:
     branches: ["**"]
     tags: ["**"]
   workflow_dispatch:
+    inputs:
+      changelog_skip_ai:
+        description: 'Publish changelog with human notes only (no AI summary)'
+        type: boolean
+        default: false
+      changelog_regenerate:
+        description: 'Backfill the AI summary for a published version, e.g. 1.0.1'
+        type: string
+        default: ''
 
 jobs:
   build-publish:
     uses: openg2p/openg2p-packaging/.github/workflows/build-publish.yml@v1
     with:
+      changelog_skip_ai: ${{ inputs.changelog_skip_ai || false }}
+      changelog_regenerate: ${{ inputs.changelog_regenerate || '' }}
       # `pins` are per-image: only the api Dockerfile declares ARG
       # FASTAPI_COMMON_REF, and `develop` is a BRANCH -- without resolving it to
       # a SHA, two builds of the same commit produce different images.
@@ -58,3 +69,5 @@ jobs:
       docker_hub_actor: ${{ secrets.docker_hub_actor }}
       docker_hub_token: ${{ secrets.docker_hub_token }}
       OPENG2P_BOT_GITHUB_PAT: ${{ secrets.OPENG2P_BOT_GITHUB_PAT }}
+      # Org-level secret; if unset the changelog still publishes human notes.
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
