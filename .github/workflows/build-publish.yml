@@ -13,14 +13,17 @@ on:
   push:
     branches: ["**"]
     tags: ["**"]
+  # These inputs are for two occasional changelog fixes only. For a normal run,
+  # leave the checkbox OFF and the text box EMPTY (it rebuilds/publishes the
+  # selected branch as usual).
   workflow_dispatch:
     inputs:
       changelog_skip_ai:
-        description: 'Publish changelog with human notes only (no AI summary)'
+        description: 'Skip the AI summary — publish the changelog from commit messages only (use when AI is unavailable). Leave OFF for a normal run.'
         type: boolean
         default: false
       changelog_regenerate:
-        description: 'Backfill the AI summary for a published version, e.g. 1.0.1'
+        description: 'Backfill the AI summary for a release that published without one: enter its frozen version e.g. 1.0.1 (not a develop version). Leave EMPTY for a normal run.'
         type: string
         default: ''
 
