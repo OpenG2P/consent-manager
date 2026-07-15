@@ -29,29 +29,39 @@ on:
 
 jobs:
   build-publish:
-    # packages: write lets the reusable workflow push images + the OCI chart to
-    # GHCR with the built-in GITHUB_TOKEN (permissions are capped by this caller).
+    # Source + CI stay on GitHub; artifacts publish to GitLab (authenticated with
+    # the GitLab deploy token below). Only repo read access is needed here.
     permissions:
       contents: read
-      packages: write
     uses: openg2p/openg2p-packaging/.github/workflows/build-publish.yml@v1
     with:
       changelog_skip_ai: ${{ inputs.changelog_skip_ai || false }}
       changelog_regenerate: ${{ inputs.changelog_regenerate || '' }}
 
-      # ── Everything to GHCR (images + OCI chart), nothing to Docker Hub / gh-pages ──
-      # Chart goes under charts/ so it doesn't collide with the api image, which
-      # shares the name `openg2p-consent-manager`.
-      registry: ghcr.io
-      chart-oci-repo: oci://ghcr.io/openg2p/charts
-      artifact-source: ghcr.io/openg2p
+      # ── Publish everything to GitLab (images + chart), nothing elsewhere ──
+      # GitLab registries are PER-PROJECT, so we split by purpose:
+      #   * IMAGES  -> this product's own project `openg2p/consent-manager`
+      #                (its Container Registry). Set THAT project private if the
+      #                images must be private -- a project setting, not a flag.
+      #   * CHART    -> a SHARED `openg2p/charts` project's Helm Package Registry,
+      #                so Rancher adds ONE repo URL and browses EVERY OpenG2P
+      #                chart + version. Every repo points its chart here.
+      # A GROUP-level deploy token covers both projects.
+      #
+      # >>> `openg2p` is the assumed GitLab group path -- replace it here (2x),
+      # >>> in `openg2p/charts` below, and in values.yaml image paths (3x) if
+      # >>> your group's path differs.
+      registry: registry.gitlab.com
+      namespace: openg2p/consent-manager          # <group>/<project>; images land under it
+      chart-gitlab-project: openg2p/charts        # SHARED catalog project (one Rancher repo for all charts)
+      artifact-source: registry.gitlab.com/openg2p
       # `pins` are per-image: only the api Dockerfile declares ARG
       # FASTAPI_COMMON_REF, and `develop` is a BRANCH -- without resolving it to
-      # a SHA, two builds of the same commit produce different images.
+      # a SHA, two builds of the same commit produce different images. No `repo`
+      # override now: image path = registry/<namespace>/<name>.
       images: |
         [
           {"name": "consent-manager-api",
-           "repo": "openg2p/openg2p-consent-manager",
            "dockerfile": "docker/consent-manager-api/Dockerfile",
            "pins": [
              {"arg": "FASTAPI_COMMON_REF",
@@ -60,11 +70,9 @@ jobs:
            ]},
 
           {"name": "consent-manager-sanity",
-           "repo": "openg2p/openg2p-consent-manager-sanity",
            "dockerfile": "docker/consent-manager-sanity/Dockerfile"},
 
           {"name": "consent-manager-ui",
-           "repo": "openg2p/openg2p-consent-manager-ui",
            "dockerfile": "ui/Dockerfile",
            "context": "ui"}
         ]
@@ -83,6 +91,10 @@ jobs:
     secrets:
       docker_hub_actor: ${{ secrets.docker_hub_actor }}
       docker_hub_token: ${{ secrets.docker_hub_token }}
+      # GitLab deploy token (registry + package registry write). Create as
+      # repo/org secrets in GitHub -- see the setup notes.
+      gitlab_registry_user: ${{ secrets.gitlab_registry_user }}
+      gitlab_registry_token: ${{ secrets.gitlab_registry_token }}
       OPENG2P_BOT_GITHUB_PAT: ${{ secrets.OPENG2P_BOT_GITHUB_PAT }}
       # Org-level secret; if unset the changelog still publishes human notes.
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
