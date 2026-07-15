@@ -183,7 +183,7 @@ ui:
     create: false
     name: ""
   image:
-    registry: docker.io
+    registry: ghcr.io
     repository: openg2p/openg2p-consent-manager-ui
     tag: develop
     pullPolicy: Always
@@ -313,6 +313,7 @@ consentManagerApi:
     name: ""
 
   image:
+    registry: ghcr.io
     repository: openg2p/openg2p-consent-manager
     # Image tag — defaults to the develop stream. Override per release/deploy
     # (e.g. --set consentManagerApi.image.tag=1.2.0).
@@ -515,7 +516,9 @@ consentManagerApi:
 sanity:
   enabled: true
   image:
-    repository: openg2p/openg2p-consent-manager-sanity
+    # sanity's template renders `repository:tag` directly (no registry field),
+    # so the GHCR host goes in the repository.
+    repository: ghcr.io/openg2p/openg2p-consent-manager-sanity
     tag: develop
     pullPolicy: Always
   # In-cluster Service URLs (no ingress path prefix). Staff api = <release>-api;
