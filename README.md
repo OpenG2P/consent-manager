@@ -1,4 +1,4 @@
-# consent-manager
+# Consent Manager
 
 OpenG2P Consent Management service.
 
