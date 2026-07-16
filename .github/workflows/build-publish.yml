@@ -9,13 +9,12 @@ name: Build & Publish
 # This file declares only what THIS repo contains. All versioning policy lives
 # in openg2p-packaging behind @v1 -- see that repo's ci/README.md.
 
+# ⚠️ REPOSITORY FROZEN — moved to https://gitlab.com/openg2p/consent-manager.
+# Automatic build & publish is DISABLED: the `push`/`tags` triggers were removed
+# so that changes here (e.g. the README freeze notice) never start a run, and no
+# stale images/charts get published from GitHub. Only manual `workflow_dispatch`
+# remains, and it should NOT be used — CI now lives on GitLab.
 on:
-  push:
-    branches: ["**"]
-    tags: ["**"]
-  # These inputs are for two occasional changelog fixes only. For a normal run,
-  # leave the checkbox OFF and the text box EMPTY (it rebuilds/publishes the
-  # selected branch as usual).
   workflow_dispatch:
     inputs:
       changelog_skip_ai:
