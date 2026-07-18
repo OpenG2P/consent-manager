@@ -515,6 +515,10 @@ consentManagerApi:
 # (Data is created only by the e2e, which is its own opt-in.)
 sanity:
   enabled: true
+  # Infix inserted into the sanity + pm-seed Job names, so they line up with the
+  # component nameOverrides (api/ui/…). Empty → <release>-sanity / <release>-pm-seed
+  # (unchanged). Set e.g. "cm" → <release>-cm-sanity / <release>-cm-pm-seed.
+  nameOverride: ""
   image:
     # sanity's template renders `repository:tag` directly (no registry field),
     # so the full GitLab image path goes in the repository.

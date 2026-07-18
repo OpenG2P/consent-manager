@@ -11,7 +11,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ .Release.Name }}-pm-seed
+  name: {{ .Release.Name }}{{ with .Values.sanity.nameOverride }}-{{ . }}{{ end }}-pm-seed
   labels: {{- include "common.labels.standard" (dict "customLabels" .Values.commonLabels "context" $) | nindent 4 }}
     app.kubernetes.io/component: pm-seed
   annotations:
