@@ -34,8 +34,11 @@ spec:
               value: {{ tpl $s.baseUrl $ | quote }}
             - name: SANITY_PARTNER_BASE_URL
               value: {{ tpl $s.partnerBaseUrl $ | quote }}
-            - name: SANITY_VERIFY_TLS
-              value: {{ $s.verifyTls | quote }}
+            # NOTE: SANITY_VERIFY_TLS is NOT set here — it comes from the
+            # consentManagerSanity.pmSeedEnv include below (which pm-seed shares).
+            # Emitting it in both places produced duplicate env keys, which
+            # server-side apply rejects: "duplicate entries for key
+            # [name=\"SANITY_VERIFY_TLS\"]", failing the whole release.
             - name: SANITY_RUN_E2E
               value: {{ $s.runE2e | quote }}
             # When false, the Job exits 0 even if tests fail, so a sanity failure
