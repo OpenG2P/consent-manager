@@ -40,7 +40,7 @@ FROM nginxinc/nginx-unprivileged:1.27-alpine
 ARG GIT_COMMIT=dev
 ARG BUILD_TIME=dev
 
-LABEL org.opencontainers.image.source="https://github.com/OpenG2P/consent-manager"
+LABEL org.opencontainers.image.source="https://gitlab.com/openg2p/platform-services/consent-manager"
 LABEL org.opencontainers.image.title="OpenG2P Consent Manager UI"
 LABEL org.opencontainers.image.revision="${GIT_COMMIT}"
 LABEL org.opencontainers.image.created="${BUILD_TIME}"
