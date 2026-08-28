@@ -30,7 +30,7 @@ dynamic = ["version"]
 [project.urls]
 Homepage = "https://openg2p.org"
 Documentation = "https://docs.openg2p.org/"
-Repository = "https://gitlab.com/openg2p/platform-services/consent-manager"
+Repository = "https://github.com/openg2p/consent-manager"
 
 [tool.hatch.version]
 path = "src/openg2p_consent_manager/__init__.py"

@@ -183,8 +183,7 @@ ui:
     create: false
     name: ""
   image:
-    registry: registry.gitlab.com
-    repository: openg2p/platform-services/consent-manager/consent-manager-ui
+    repository: openg2p/consent-manager-ui
     tag: develop
     pullPolicy: Always
   containerPort: 8080
@@ -313,8 +312,7 @@ consentManagerApi:
     name: ""
 
   image:
-    registry: registry.gitlab.com
-    repository: openg2p/platform-services/consent-manager/consent-manager-api
+    repository: openg2p/consent-manager-api
     # Image tag — defaults to the develop stream. Override per release/deploy
     # (e.g. --set consentManagerApi.image.tag=1.2.0).
     tag: "develop"
@@ -522,7 +520,7 @@ sanity:
   image:
     # sanity's template renders `repository:tag` directly (no registry field),
     # so the full GitLab image path goes in the repository.
-    repository: registry.gitlab.com/openg2p/platform-services/consent-manager/consent-manager-sanity
+    repository: openg2p/consent-manager-sanity
     tag: develop
     pullPolicy: Always
   # In-cluster Service URLs (no ingress path prefix). Staff api = <release>-api;
