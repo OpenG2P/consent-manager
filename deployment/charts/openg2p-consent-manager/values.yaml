@@ -184,7 +184,7 @@ ui:
     name: ""
   image:
     repository: openg2p/consent-manager-ui
-    tag: develop
+    tag: "1.0.2"
     pullPolicy: Always
   containerPort: 8080
   podSecurityContext:
@@ -315,7 +315,7 @@ consentManagerApi:
     repository: openg2p/consent-manager-api
     # Image tag — defaults to the develop stream. Override per release/deploy
     # (e.g. --set consentManagerApi.image.tag=1.2.0).
-    tag: "develop"
+    tag: "1.0.2"
     pullPolicy: Always
 
   podSecurityContext:
@@ -521,7 +521,7 @@ sanity:
     # sanity's template renders `repository:tag` directly (no registry field),
     # so the full GitLab image path goes in the repository.
     repository: openg2p/consent-manager-sanity
-    tag: develop
+    tag: "1.0.2"
     pullPolicy: Always
   # In-cluster Service URLs (no ingress path prefix). Staff api = <release>-api;
   # partner api (/validate, JWKS, receipts) = <release>-partner-api. Both :80.
