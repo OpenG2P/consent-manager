@@ -1,7 +1,7 @@
 FROM python:3.12-slim-bookworm
 
 # External OpenG2P framework ref. Override via build-arg / CI input.
-ARG FASTAPI_COMMON_REF=1.2.0
+ARG FASTAPI_COMMON_REF=1.2.1
 
 # Only git is needed (to pip-install the framework from GitHub). All Python deps
 # ship prebuilt wheels — no compiler/headers required.

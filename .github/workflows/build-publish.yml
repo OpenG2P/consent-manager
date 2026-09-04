@@ -36,7 +36,7 @@ jobs:
            "pins": [
              {"arg": "FASTAPI_COMMON_REF",
               "repo": "https://github.com/openg2p/openg2p-fastapi-common",
-              "ref": "develop"}
+              "ref": "1.2.1"}
            ]},
 
           {"name": "consent-manager-sanity",
