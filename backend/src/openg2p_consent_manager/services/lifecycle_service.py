@@ -15,6 +15,7 @@ from ..models import (
     ConsentArtefact,
     ConsentRequest,
     Partner,
+    PartnerStatus,
     RequestStatus,
 )
 from .partner_service import PartnerService
@@ -40,27 +41,59 @@ class LifecycleService(BaseService):
         self.receipts = ReceiptService.get_component()
 
     async def create_request(self, data) -> ConsentRequest:
-        policy = await self.partners.get_policy(data.partner_id)
-        if policy is None:
-            raise LifecycleError(404, "partner or policy not found")
-
         partner = await self.partners.get_partner(data.partner_id)
         if partner is None:
             raise LifecycleError(404, "partner not found")
 
-        # Reject up front anything the policy can never satisfy.
-        if not set(data.requested_scopes).issubset(set(policy.allowed_data_scopes or [])):
-            raise LifecycleError(422, "scope_exceeds_policy")
+        grants = None
+        if data.grants is not None:
+            # One request, several controllers: each grant must be within the
+            # partner's binding + active policy for that controller.
+            grants = []
+            for g in data.grants:
+                binding = await self.partners.get_binding(partner.audience, g.data_controller)
+                if binding is None or binding.status != PartnerStatus.active.value:
+                    raise LifecycleError(
+                        422, f"partner not bound to data_controller '{g.data_controller}'"
+                    )
+                policy = await self.partners.get_policy(binding.id)
+                if policy is None:
+                    raise LifecycleError(
+                        404, f"no active policy for data_controller '{g.data_controller}'"
+                    )
+                if not set(g.data_scopes).issubset(set(policy.allowed_data_scopes or [])):
+                    raise LifecycleError(
+                        422, f"scope_exceeds_policy for data_controller '{g.data_controller}'"
+                    )
+                grants.append(
+                    {
+                        "data_controller": g.data_controller,
+                        "data_scopes": list(g.data_scopes),
+                        "partner_binding_id": binding.id,
+                    }
+                )
+            requested_scopes = sorted({s for g in grants for s in g["data_scopes"]})
+            controller_id = grants[0]["data_controller"] if len(grants) == 1 else None
+        else:
+            policy = await self.partners.get_policy(data.partner_id)
+            if policy is None:
+                raise LifecycleError(404, "partner or policy not found")
+            # Reject up front anything the policy can never satisfy.
+            if not set(data.requested_scopes).issubset(set(policy.allowed_data_scopes or [])):
+                raise LifecycleError(422, "scope_exceeds_policy")
+            requested_scopes = data.requested_scopes
+            controller_id = partner.controller_id
 
         validity = data.validity or {}
         async with async_session()() as session:
             req = ConsentRequest(
                 subject_id_type=data.subject_id.type,
                 subject_id_value=data.subject_id.value,
-                controller_id=partner.controller_id,
+                controller_id=controller_id,
                 partner_id=data.partner_id,
                 purpose=data.purpose,
-                requested_scopes=data.requested_scopes,
+                requested_scopes=requested_scopes,
+                grants=grants,
                 valid_from=validity.get("valid_from"),
                 valid_until=validity.get("valid_until"),
                 status=RequestStatus.pending.value,
@@ -105,7 +138,17 @@ class LifecycleService(BaseService):
             await session.refresh(ctx)
             return ctx
 
-    async def approve(self, request_id: str, granted_scopes: list) -> ConsentArtefact:
+    async def approve(
+        self, request_id: str, granted_scopes: Optional[list] = None,
+        granted_grants: Optional[list] = None,
+    ) -> ConsentArtefact:
+        """Approve a request. ``granted_scopes`` for a single-controller request;
+        ``granted_grants`` (list of ConsentGrant) for a grants request — the
+        subject approves each controller's scopes, and an omitted controller is
+        declined. The resulting artefact holds the approved grants.
+
+        Note: an originated consent is not (yet) presentable at /validate — that
+        path takes a partner-signed JWS only."""
         async with async_session()() as session:
             req = await session.get(ConsentRequest, request_id)
             if req is None:
@@ -117,6 +160,16 @@ class LifecycleService(BaseService):
             if ctx is None:
                 raise LifecycleError(412, "authentication required before approval")
 
+            if req.grants is not None:
+                artefact = await self._approve_grants(
+                    session, req, ctx, granted_scopes, granted_grants
+                )
+                await session.commit()
+                await session.refresh(artefact)
+                return artefact
+
+            if granted_scopes is None:
+                raise LifecycleError(400, "granted_scopes is required for this request")
             if not set(granted_scopes).issubset(set(req.requested_scopes or [])):
                 raise LifecycleError(400, "granted scopes exceed requested scopes")
 
@@ -166,6 +219,88 @@ class LifecycleService(BaseService):
             await session.commit()
             await session.refresh(req)
             return req
+
+    async def _approve_grants(self, session, req, ctx, granted_scopes, granted_grants):
+        """Build (and add to the session) the artefact + receipt for a grants
+        request. Each approved grant is narrowed to its binding's active policy."""
+        requested = {g["data_controller"]: g for g in req.grants}
+        if granted_grants is not None:
+            approved = {}
+            for g in granted_grants:
+                if g.data_controller not in requested:
+                    raise LifecycleError(
+                        400, f"data_controller '{g.data_controller}' was not requested"
+                    )
+                if not set(g.data_scopes).issubset(
+                    set(requested[g.data_controller]["data_scopes"])
+                ):
+                    raise LifecycleError(
+                        400,
+                        f"granted scopes exceed requested scopes for "
+                        f"'{g.data_controller}'",
+                    )
+                approved[g.data_controller] = list(g.data_scopes)
+        else:
+            # One scope list for every controller: each grant keeps the scopes it
+            # requested that the subject approved.
+            if not set(granted_scopes).issubset(set(req.requested_scopes or [])):
+                raise LifecycleError(400, "granted scopes exceed requested scopes")
+            approved = {
+                c: [s for s in g["data_scopes"] if s in set(granted_scopes)]
+                for c, g in requested.items()
+            }
+
+        grants = []
+        fetch_type = None
+        for controller, rg in requested.items():
+            scopes = approved.get(controller) or []
+            if not scopes:
+                continue  # declined by the subject
+            policy = await self.partners.get_policy(rg["partner_binding_id"])
+            allowed = set(policy.allowed_data_scopes or []) if policy else set()
+            effective = sorted(set(scopes) & allowed)
+            if not effective:
+                continue
+            fetch_type = fetch_type or (policy.fetch_type if policy else None)
+            grants.append(
+                {
+                    "data_controller": controller,
+                    "data_scopes": rg["data_scopes"],
+                    "granted_scopes": sorted(scopes),
+                    "effective_data_scopes": effective,
+                    "partner_binding_id": rg["partner_binding_id"],
+                    "policy_version": policy.version if policy else None,
+                }
+            )
+        if not grants:
+            raise LifecycleError(400, "no granted scope permitted by policy")
+
+        partner = await session.get(Partner, req.partner_id)
+        now = datetime.now(timezone.utc)
+        artefact = ConsentArtefact(
+            subject_id_type=req.subject_id_type,
+            subject_id_value=req.subject_id_value,
+            controller_id=grants[0]["data_controller"] if len(grants) == 1 else None,
+            partner_id=req.partner_id,
+            purpose=req.purpose,
+            data_scopes=req.requested_scopes,
+            effective_data_scopes=sorted(
+                {s for g in grants for s in g["effective_data_scopes"]}
+            ),
+            grants=grants,
+            fetch_type=fetch_type or "oneshot",
+            valid_from=req.valid_from or now,
+            valid_until=req.valid_until or (now + timedelta(days=365)),
+            source=ArtefactSource.originated.value,
+            policy_version=grants[0]["policy_version"] if len(grants) == 1 else None,
+            auth_context_id=ctx.id,
+            status=ArtefactStatus.active.value,
+        )
+        receipt = self.receipts.build_receipt(artefact, partner)
+        req.status = RequestStatus.approved.value
+        session.add(artefact)
+        session.add(receipt)
+        return artefact
 
     # ── helpers ──────────────────────────────────────────────────────────────
 

@@ -96,7 +96,9 @@ class LifecycleController(BaseController):
 
     async def approve(self, request_id: str, data: ApproveRequest):
         try:
-            artefact = await self.lifecycle.approve(request_id, data.granted_scopes)
+            artefact = await self.lifecycle.approve(
+                request_id, granted_scopes=data.granted_scopes, granted_grants=data.grants
+            )
         except LifecycleError as exc:
             return _err(exc)
         return _artefact_response(artefact)

@@ -6,6 +6,7 @@ from typing import Optional
 from openg2p_fastapi_common.service import BaseService
 from openg2p_fastapi_common.utils.crypto import build_crypto_helper
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from ..config import Settings
 from ..db import async_session
@@ -73,17 +74,70 @@ class VerificationService(BaseService):
                 now, ctx_hash,
             )
 
-        # Idempotency: the same object (jti) returns its existing decision.
-        existing = await self._existing_artefact(obj.jti)
+        # 1. Grant selection — which registry (data controller) is asking.
+        #    A consent with `grants` needs the caller to name its controller and
+        #    is evaluated only on that controller's grant. A legacy consent is a
+        #    single grant; if the caller names a controller it must match.
+        if obj.has_grants:
+            if not parsed.data_controller:
+                return await self._deny(
+                    ReasonCode.malformed_object,
+                    "data_controller is required when the consent carries grants",
+                    now, ctx_hash, jti=obj.jti,
+                )
+            controller = parsed.data_controller
+            grant = obj.grant_for(controller)
+            if grant is None:
+                return await self._deny(
+                    ReasonCode.controller_not_granted,
+                    f"consent has no grant for data_controller '{controller}'",
+                    now, ctx_hash, jti=obj.jti, data_controller=controller,
+                )
+        else:
+            controller = obj.data_controller
+            if parsed.data_controller and parsed.data_controller != controller:
+                return await self._deny(
+                    ReasonCode.controller_not_granted,
+                    f"consent is for data_controller '{controller}', "
+                    f"not '{parsed.data_controller}'",
+                    now, ctx_hash, jti=obj.jti, data_controller=parsed.data_controller,
+                )
+            grant = obj.grant_for(controller)
+
+        # 1b. Subject — a caller-declared subject of the same id type as the
+        #     consent's subject must be the same subject. (A different id type is
+        #     for the registry to resolve; CM cannot compare across types.)
+        ctx_subject = parsed.request_context.subject_id if parsed.request_context else None
+        if self._subject_mismatch(ctx_subject, obj.subject_id.type, obj.subject_id.value):
+            return await self._deny(
+                ReasonCode.subject_mismatch,
+                "request_context.subject_id does not match the consent subject",
+                now, ctx_hash, jti=obj.jti, data_controller=controller,
+            )
+
+        # Idempotency: the same object (jti) presented for the same controller
+        # returns its existing decision. Keyed per (jti, controller), so one
+        # consent validated by two registries gets two decisions and receipts.
+        existing = await self._existing_artefact(obj.jti, controller)
         if existing is not None:
+            if self._subject_mismatch(
+                ctx_subject, existing.subject_id_type, existing.subject_id_value
+            ):
+                return await self._deny(
+                    ReasonCode.subject_mismatch,
+                    "request_context.subject_id does not match the consent subject",
+                    now, ctx_hash, jti=obj.jti, data_controller=controller,
+                )
             return self._decision_from_artefact(existing, now)
 
-        # 2. Known party — partner + policy (cached).
-        material = await self.partners.get_verification_material(obj.aud)
+        # 2. Known party — the partner's binding to this controller + the
+        #    binding's policy (cached). Policies are per (audience, controller).
+        material = await self.partners.get_verification_material(obj.aud, controller)
         if material is None:
             return await self._deny(
-                ReasonCode.unknown_partner, "partner not onboarded or suspended",
-                now, ctx_hash, jti=obj.jti,
+                ReasonCode.unknown_partner,
+                f"partner not onboarded for data_controller '{controller}', or suspended",
+                now, ctx_hash, jti=obj.jti, data_controller=controller,
             )
         partner = material["partner"]
         policy = material["policy"]
@@ -98,7 +152,7 @@ class VerificationService(BaseService):
         if policy and policy.allowed_signing_algs and alg not in policy.allowed_signing_algs:
             return await self._deny(
                 ReasonCode.signature_invalid, "signing algorithm not permitted",
-                now, ctx_hash, partner_id=partner.id, jti=obj.jti,
+                now, ctx_hash, partner_id=partner.id, jti=obj.jti, data_controller=controller,
                 policy_version=policy_version,
             )
         try:
@@ -110,7 +164,7 @@ class VerificationService(BaseService):
             return await self._deny(
                 ReasonCode.signature_invalid,
                 "signature did not verify (or no verifying key from partner management)",
-                now, ctx_hash, partner_id=partner.id, jti=obj.jti,
+                now, ctx_hash, partner_id=partner.id, jti=obj.jti, data_controller=controller,
                 policy_version=policy_version,
             )
 
@@ -120,21 +174,23 @@ class VerificationService(BaseService):
         if abs((now - issued_at).total_seconds()) > skew.total_seconds():
             return await self._deny(
                 ReasonCode.replay, "issued_at outside freshness window",
-                now, ctx_hash, partner_id=partner.id, jti=obj.jti,
+                now, ctx_hash, partner_id=partner.id, jti=obj.jti, data_controller=controller,
                 policy_version=policy_version,
             )
 
         # 4–8. Policy evaluation (audience, subject, purpose, scope, validity).
-        result = self.policy.evaluate(obj, material, parsed.request_context)
+        result = self.policy.evaluate(obj, material, parsed.request_context, grant=grant)
         if not result.permit:
             return await self._deny(
                 result.reason, result.detail, now, ctx_hash,
                 partner_id=partner.id, jti=obj.jti, policy_version=result.policy_version,
+                data_controller=controller,
             )
 
-        # Permit — mint canonical artefact + signed receipt + decision log.
+        # Permit — mint canonical artefact + signed receipt + decision log for
+        # this (consent, controller).
         return await self._permit(
-            obj, partner, result, now, ctx_hash
+            obj, grant, partner, result, now, ctx_hash
         )
 
     # ── helpers ──────────────────────────────────────────────────────────────
@@ -157,10 +213,23 @@ class VerificationService(BaseService):
             result = await session.execute(query)
             return list(result.scalars().all())
 
-    async def _existing_artefact(self, jti: str) -> Optional[ConsentArtefact]:
+    @staticmethod
+    def _subject_mismatch(ctx_subject, subject_type: str, subject_value: str) -> bool:
+        return (
+            ctx_subject is not None
+            and ctx_subject.type == subject_type
+            and ctx_subject.value != subject_value
+        )
+
+    async def _existing_artefact(
+        self, jti: str, controller_id: str
+    ) -> Optional[ConsentArtefact]:
         async with async_session()() as session:
             result = await session.execute(
-                select(ConsentArtefact).where(ConsentArtefact.object_jti == jti)
+                select(ConsentArtefact).where(
+                    ConsentArtefact.object_jti == jti,
+                    ConsentArtefact.controller_id == controller_id,
+                )
             )
             return result.scalars().first()
 
@@ -173,32 +242,35 @@ class VerificationService(BaseService):
         if status == ArtefactStatus.revoked.value:
             return Decision(
                 decision="deny", reason_code=ReasonCode.revoked,
-                detail="consent revoked", evaluated_at=now,
+                detail="consent revoked", data_controller=artefact.controller_id,
+                evaluated_at=now,
             )
         if status == ArtefactStatus.expired.value:
             return Decision(
                 decision="deny", reason_code=ReasonCode.expired,
-                detail="consent expired", evaluated_at=now,
+                detail="consent expired", data_controller=artefact.controller_id,
+                evaluated_at=now,
             )
         return Decision(
             decision="permit", reason_code=ReasonCode.ok,
             consent_id=artefact.id,
             subject_id=SubjectId(type=artefact.subject_id_type, value=artefact.subject_id_value),
+            data_controller=artefact.controller_id,
             effective_data_scopes=artefact.effective_data_scopes,
             valid_until=artefact.valid_until, policy_version=artefact.policy_version,
             evaluated_at=now,
         )
 
-    async def _permit(self, obj, partner, result, now, ctx_hash) -> Decision:
+    async def _permit(self, obj, grant, partner, result, now, ctx_hash) -> Decision:
         from ..schemas.common import SubjectId
 
         artefact = ConsentArtefact(
             subject_id_type=obj.subject_id.type,
             subject_id_value=obj.subject_id.value,
-            controller_id=partner.controller_id,
+            controller_id=grant.data_controller,
             partner_id=partner.id,
             purpose=obj.purpose,
-            data_scopes=obj.data_scopes,
+            data_scopes=grant.data_scopes,
             effective_data_scopes=result.effective_scopes,
             fetch_type=obj.fetch_type,
             valid_from=_aware(obj.validity.valid_from),
@@ -216,11 +288,21 @@ class VerificationService(BaseService):
             session.add(
                 DecisionLog(
                     partner_id=partner.id, consent_id=artefact.id, object_jti=obj.jti,
+                    data_controller=grant.data_controller,
                     decision="permit", reason_code=ReasonCode.ok.value,
                     policy_version=result.policy_version, request_ctx_hash=ctx_hash,
                 )
             )
-            await session.commit()
+            try:
+                await session.commit()
+            except IntegrityError:
+                # A concurrent validation of the same (jti, controller) won the
+                # race — return its decision rather than minting a duplicate.
+                await session.rollback()
+                existing = await self._existing_artefact(obj.jti, grant.data_controller)
+                if existing is None:
+                    raise
+                return self._decision_from_artefact(existing, now)
             await session.refresh(artefact)
             await session.refresh(receipt)
 
@@ -228,6 +310,7 @@ class VerificationService(BaseService):
             decision="permit", reason_code=ReasonCode.ok,
             consent_id=artefact.id, receipt_id=receipt.id,
             subject_id=SubjectId(type=obj.subject_id.type, value=obj.subject_id.value),
+            data_controller=grant.data_controller,
             effective_data_scopes=result.effective_scopes,
             valid_until=artefact.valid_until, policy_version=result.policy_version,
             evaluated_at=now,
@@ -236,17 +319,19 @@ class VerificationService(BaseService):
     async def _deny(
         self, reason: ReasonCode, detail: Optional[str], now, ctx_hash,
         partner_id: Optional[str] = None, jti: Optional[str] = None,
-        policy_version: Optional[int] = None,
+        policy_version: Optional[int] = None, data_controller: Optional[str] = None,
     ) -> Decision:
         async with async_session()() as session:
             session.add(
                 DecisionLog(
-                    partner_id=partner_id, object_jti=jti, decision="deny",
+                    partner_id=partner_id, object_jti=jti, data_controller=data_controller,
+                    decision="deny",
                     reason_code=reason.value, detail=detail,
                     policy_version=policy_version, request_ctx_hash=ctx_hash,
                 )
             )
             await session.commit()
         return Decision(
-            decision="deny", reason_code=reason, detail=detail, evaluated_at=now,
+            decision="deny", reason_code=reason, detail=detail,
+            data_controller=data_controller, evaluated_at=now,
         )

@@ -19,10 +19,23 @@ _config = Settings.get_config()
 _logger = logging.getLogger(_config.logging_default_logger_name)
 
 
+class PartnerConflict(Exception):
+    """A binding request conflicts with existing bindings (HTTP 409)."""
+
+    def __init__(self, detail: str):
+        super().__init__(detail)
+        self.detail = detail
+
+
+def _cache_key(audience: str, controller_id: str) -> str:
+    return f"{audience}\x1f{controller_id}"
+
+
 class PartnerService(BaseService):
     """Partner *policy bindings* (admin) plus the cached lookups the hot path
     needs. Partner identity + keys live in Partner Management; a row here binds a
-    PM partner to a controller and a versioned data-share policy."""
+    PM partner to a controller and a versioned data-share policy. One partner
+    (audience) may have several bindings — one per controller."""
 
     def __init__(self, name="", **kwargs):
         super().__init__(name, **kwargs)
@@ -31,16 +44,48 @@ class PartnerService(BaseService):
     # ── Admin: bindings ──────────────────────────────────────────────────────
 
     async def create_partner(self, data) -> Partner:
-        # A binding is created active. Partner *identity* onboarding/approval is
-        # Partner Management's concern; CM only gates data-share POLICY widening
-        # (see upsert_policy). A binding with no policy simply denies everything
-        # until a policy is set.
+        """Create a binding of a partner (audience) to one controller.
+
+        A binding is created active. Partner *identity* onboarding/approval is
+        Partner Management's concern; CM only gates data-share POLICY widening
+        (see upsert_policy). A binding with no policy simply denies everything
+        until a policy is set.
+
+        The same audience may be bound to several controllers (one binding and
+        policy per controller). All bindings of one audience share its PM
+        reference: a new binding inherits ``partner_mgmt_id`` from the existing
+        ones when omitted, and may not name a different one. Raises
+        PartnerConflict on a duplicate (audience, controller) or a PM-reference
+        mismatch.
+        """
         async with async_session()() as session:
+            result = await session.execute(
+                select(Partner).where(Partner.audience == data.audience)
+            )
+            siblings = list(result.scalars().all())
+            if any(p.controller_id == data.controller_id for p in siblings):
+                raise PartnerConflict(
+                    f"audience '{data.audience}' is already bound to controller "
+                    f"'{data.controller_id}'"
+                )
+            partner_mgmt_id = data.partner_mgmt_id
+            if siblings:
+                existing_ref = siblings[0].partner_mgmt_id
+                if partner_mgmt_id is None:
+                    partner_mgmt_id = existing_ref
+                elif (partner_mgmt_id or data.audience) != (existing_ref or data.audience):
+                    raise PartnerConflict(
+                        f"audience '{data.audience}' is bound with partner_mgmt_id "
+                        f"'{existing_ref or data.audience}'; a new binding cannot use "
+                        f"'{partner_mgmt_id}'"
+                    )
             partner = Partner(
-                name=data.name,
+                name=data.name if data.name is not None else (
+                    siblings[0].name if siblings else None
+                ),
                 audience=data.audience,
                 controller_id=data.controller_id,
-                partner_mgmt_id=data.partner_mgmt_id,
+                partner_mgmt_id=partner_mgmt_id,
                 status=PartnerStatus.active.value,
             )
             session.add(partner)
@@ -53,12 +98,18 @@ class PartnerService(BaseService):
             return await session.get(Partner, partner_id)
 
     async def list_partners(
-        self, controller_id: Optional[str] = None, status: Optional[str] = None
+        self,
+        controller_id: Optional[str] = None,
+        status: Optional[str] = None,
+        audience: Optional[str] = None,
     ) -> list:
-        """List partners for the admin console, newest first. Optional filters by
-        controller (registry) and lifecycle status."""
+        """List bindings for the admin console, newest first. Optional filters by
+        controller (registry), lifecycle status and audience (all bindings of
+        one partner)."""
         async with async_session()() as session:
             query = select(Partner)
+            if audience:
+                query = query.where(Partner.audience == audience)
             if controller_id:
                 query = query.where(Partner.controller_id == controller_id)
             if status:
@@ -68,17 +119,28 @@ class PartnerService(BaseService):
             return list(result.scalars().all())
 
     async def update_partner(self, partner_id: str, data) -> Optional[Partner]:
+        """Update one binding's label/status. A ``partner_mgmt_id`` change is
+        partner identity, so it is applied to every binding of the audience."""
         async with async_session()() as session:
             partner = await session.get(Partner, partner_id)
             if partner is None:
                 return None
-            for field in ("name", "status", "partner_mgmt_id"):
+            for field in ("name", "status"):
                 value = getattr(data, field, None)
                 if value is not None:
                     setattr(partner, field, value)
+            touched = [partner]
+            if getattr(data, "partner_mgmt_id", None) is not None:
+                result = await session.execute(
+                    select(Partner).where(Partner.audience == partner.audience)
+                )
+                touched = list(result.scalars().all())
+                for binding in touched:
+                    binding.partner_mgmt_id = data.partner_mgmt_id
             await session.commit()
             await session.refresh(partner)
-        self._invalidate(partner.audience)
+        for binding in touched:
+            self._invalidate(binding.audience, binding.controller_id)
         return partner
 
     # ── Admin: policy (versioned) ────────────────────────────────────────────
@@ -138,10 +200,10 @@ class PartnerService(BaseService):
             session.add(policy)
             await session.commit()
             await session.refresh(policy)
-            audience = partner.audience
+            audience, controller_id = partner.audience, partner.controller_id
 
         if not gated:
-            self._invalidate(audience)  # active policy changed
+            self._invalidate(audience, controller_id)  # active policy changed
         return policy
 
     async def set_policy_awe_request_id(self, policy_id: str, awe_request_id: str) -> None:
@@ -175,7 +237,7 @@ class PartnerService(BaseService):
             if policy.status != PolicyStatus.pending.value:
                 partner = await session.get(Partner, policy.partner_id)
                 if partner:
-                    self._invalidate(partner.audience)
+                    self._invalidate(partner.audience, partner.controller_id)
                 return True
 
             if approved:
@@ -194,10 +256,10 @@ class PartnerService(BaseService):
                 policy.status = PolicyStatus.rejected.value
 
             partner = await session.get(Partner, policy.partner_id)
-            audience = partner.audience if partner else None
+            key = (partner.audience, partner.controller_id) if partner else None
             await session.commit()
-        if audience:
-            self._invalidate(audience)
+        if key:
+            self._invalidate(*key)
         return True
 
     async def list_policies(self, partner_id: str) -> Optional[list]:
@@ -272,21 +334,27 @@ class PartnerService(BaseService):
 
     # ── Hot path: cached verification material ───────────────────────────────
 
-    async def get_verification_material(self, audience: str) -> Optional[dict]:
-        """Return the active partner and its active policy by audience — cached
-        per pod for the validation hot path.
+    async def get_verification_material(
+        self, audience: str, controller_id: str
+    ) -> Optional[dict]:
+        """Return the active binding of ``audience`` to ``controller_id`` and its
+        active policy — cached per pod for the validation hot path. The policy is
+        per (audience, controller): a partner bound to two controllers has two
+        independent policies.
 
         Partner public keys are NOT included here: they are owned by the Partner
         Management service and fetched separately (and cached with their own
         discipline) by the shared fastapi-common CryptoHelper (partner-mgmt
         backend) during consent-JWS verification, keyed by the partner's
         ``partner_mgmt_id``. This method only resolves the onboarded party +
-        policy. Returns None if the partner is unknown or suspended.
+        policy. Returns None if the partner has no active binding to the
+        controller (unknown, suspended, or not bound to that controller).
 
         Shape: {"partner": Partner, "policy": PartnerPolicy | None}
         """
+        key = _cache_key(audience, controller_id)
         if _config.partner_cache_enabled:
-            cached = self._cache.get(audience)
+            cached = self._cache.get(key)
             if cached is not None:
                 return cached
 
@@ -294,6 +362,7 @@ class PartnerService(BaseService):
             result = await session.execute(
                 select(Partner).where(
                     Partner.audience == audience,
+                    Partner.controller_id == controller_id,
                     Partner.status == PartnerStatus.active.value,
                 )
             )
@@ -311,12 +380,22 @@ class PartnerService(BaseService):
 
         material = {"partner": partner, "policy": policy}
         if _config.partner_cache_enabled:
-            self._cache.set(audience, material)
+            self._cache.set(key, material)
         return material
 
-    def _invalidate(self, audience: Optional[str]) -> None:
-        if audience:
-            self._cache.invalidate(audience)
+    async def get_binding(self, audience: str, controller_id: str) -> Optional[Partner]:
+        """The binding of ``audience`` to ``controller_id`` (any status)."""
+        async with async_session()() as session:
+            result = await session.execute(
+                select(Partner).where(
+                    Partner.audience == audience, Partner.controller_id == controller_id
+                )
+            )
+            return result.scalars().first()
+
+    def _invalidate(self, audience: Optional[str], controller_id: Optional[str]) -> None:
+        if audience and controller_id:
+            self._cache.invalidate(_cache_key(audience, controller_id))
 
     async def count_partners(self) -> int:
         async with async_session()() as session:

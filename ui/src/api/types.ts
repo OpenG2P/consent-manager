@@ -5,7 +5,8 @@ export type PartnerStatus = "active" | "suspended";
 
 // A "partner" in CM is a POLICY BINDING: it binds a Partner-Management partner
 // (partner_mgmt_id) to a controller + data-share policy. Identity/keys live in
-// PM; `name` here is just a display label.
+// PM; `name` here is just a display label. One partner (audience) may have
+// several bindings — one per controller, each with its own policy.
 export interface Partner {
   id: string;
   name?: string | null;
@@ -86,6 +87,7 @@ export interface DecisionLog {
   partner_id?: string | null;
   consent_id?: string | null;
   object_jti?: string | null;
+  data_controller?: string | null;
   decision: "permit" | "deny";
   reason_code: string;
   detail?: string | null;
@@ -111,14 +113,28 @@ export interface Artefact {
   subject_id_type: string;
   subject_id_value: string;
   partner_id: string;
+  controller_id?: string | null;
   purpose: Purpose;
   effective_data_scopes: string[];
+  grants?: ArtefactGrant[] | null;
   status: ConsentStatus;
   source: string;
   valid_from: string;
   valid_until: string;
   created_at: string;
   revoked_at?: string | null;
+}
+
+// One grant per data controller (registry) in a consent.
+export interface Grant {
+  data_controller: string;
+  data_scopes: string[];
+}
+
+export interface ArtefactGrant extends Grant {
+  effective_data_scopes: string[];
+  granted_scopes?: string[];
+  policy_version?: number | null;
 }
 
 export interface Paginated<T> {
@@ -141,8 +157,11 @@ export interface ConsentRequest {
   subject_id_type: string;
   subject_id_value: string;
   partner_id: string;
+  controller_id?: string | null;
   purpose: Purpose;
   requested_scopes: string[];
+  // Present when the request spans several controllers (one grant each).
+  grants?: Grant[] | null;
   status: string; // created | authenticated | approved | denied | expired
   valid_from?: string | null;
   valid_until?: string | null;

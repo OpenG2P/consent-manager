@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import DateTime, Integer, String, Text
+from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -34,10 +34,16 @@ class ConsentRequest(BaseORMModelWithId):
 
     subject_id_type: Mapped[str] = mapped_column(String(50), index=True)
     subject_id_value: Mapped[str] = mapped_column(String(255), index=True)
-    controller_id: Mapped[str] = mapped_column(String(255), index=True)
+    # The single controller for a legacy request; NULL when the request carries
+    # several ``grants`` (one per controller).
+    controller_id: Mapped[Optional[str]] = mapped_column(String(255), index=True, nullable=True)
     partner_id: Mapped[str] = mapped_column(String, index=True)
     purpose: Mapped[dict] = mapped_column(JSONB)
+    # Union of all requested scopes (for a grants request too).
     requested_scopes: Mapped[list] = mapped_column(JSONB, default=list)
+    # Requested grants: [{"data_controller", "data_scopes", "partner_binding_id"}].
+    # NULL for a legacy single-controller request.
+    grants: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
     valid_from: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     valid_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default=RequestStatus.pending.value, index=True)
@@ -59,13 +65,23 @@ class AuthContext(BaseORMModelWithId):
 
 
 class ConsentArtefact(BaseORMModelWithId):
-    """Canonical consent decision — from an embedded object or an origination."""
+    """Canonical consent decision — from an embedded object or an origination.
+
+    Embedded: one artefact per (consent jti, data controller) — a consent with
+    several grants validated by two registries yields two artefacts (and two
+    receipts). Originated: one artefact per approved request; when the request
+    carried grants, ``grants`` holds them and ``controller_id`` is the single
+    controller only if exactly one grant was approved (else NULL).
+    """
 
     __tablename__ = "consent_artefacts"
+    __table_args__ = (
+        UniqueConstraint("object_jti", "controller_id", name="uq_artefact_jti_controller"),
+    )
 
     subject_id_type: Mapped[str] = mapped_column(String(50), index=True)
     subject_id_value: Mapped[str] = mapped_column(String(255), index=True)
-    controller_id: Mapped[str] = mapped_column(String(255), index=True)
+    controller_id: Mapped[Optional[str]] = mapped_column(String(255), index=True, nullable=True)
     partner_id: Mapped[str] = mapped_column(String, index=True)
 
     purpose: Mapped[dict] = mapped_column(JSONB)
@@ -81,8 +97,13 @@ class ConsentArtefact(BaseORMModelWithId):
     auth_context_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     # Idempotency / replay: the jti of the embedded object that produced this
-    # artefact. Unique so the same object never mints duplicates.
-    object_jti: Mapped[Optional[str]] = mapped_column(String(255), unique=True, nullable=True)
+    # artefact. Unique per (object_jti, controller_id) so the same object never
+    # mints duplicates for one controller, while each granted controller gets
+    # its own decision.
+    object_jti: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # Originated grants consent: [{"data_controller", "data_scopes",
+    # "effective_data_scopes", "partner_binding_id", "policy_version"}].
+    grants: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
 
     status: Mapped[str] = mapped_column(String(20), default=ArtefactStatus.active.value, index=True)
     revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -37,14 +37,22 @@ class Partner(BaseORMModelWithId):
     Management service — this row is NOT the partner record, only CM's binding of
     a policy to that partner for a given controller. ``name`` is a non-authoritative
     display label only.
+
+    One partner (``audience``) may be bound to SEVERAL controllers — one row per
+    (audience, controller_id), each with its own versioned policy. A consent with
+    ``grants`` is validated by each controller against that controller's binding.
     """
 
     __tablename__ = "partners"
+    __table_args__ = (
+        UniqueConstraint("audience", "controller_id", name="uq_partner_audience_controller"),
+    )
 
     # Non-authoritative display label (identity lives in Partner Management).
     name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    # The identifier this partner presents as `aud` in a consent object.
-    audience: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    # The identifier this partner presents as `aud` in a consent object. Not
+    # unique on its own: unique per (audience, controller_id).
+    audience: Mapped[str] = mapped_column(String(255), index=True)
     controller_id: Mapped[str] = mapped_column(String(255), index=True)
     status: Mapped[str] = mapped_column(String(20), default=PartnerStatus.active.value)
     # The partner's reference in the Partner Management service — used to fetch
@@ -56,8 +64,10 @@ class Partner(BaseORMModelWithId):
 
 
 class PartnerPolicy(BaseORMModelWithId):
-    """The ceiling on everything a partner can be granted. Versioned. A widening
-    version may sit in `pending` awaiting AWE approval before it goes active."""
+    """The ceiling on everything a partner can be granted for one controller.
+    ``partner_id`` is the binding id, so a policy is per (audience, controller).
+    Versioned. A widening version may sit in `pending` awaiting AWE approval
+    before it goes active."""
 
     __tablename__ = "partner_policies"
     __table_args__ = (

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
 import { api } from "../api/client";
@@ -19,6 +20,18 @@ export default function ConsentRequestPage() {
     queryFn: () => api.getConsentRequest(requestId),
   });
 
+  // A request spanning several registries lists one grant per source; the
+  // subject may decline a source by unticking it.
+  const [declined, setDeclined] = useState<Set<string>>(new Set());
+  const toggleSource = (controller: string) =>
+    setDeclined((prev) => {
+      const next = new Set(prev);
+      if (next.has(controller)) next.delete(controller);
+      else next.add(controller);
+      return next;
+    });
+  const approvedGrants = (data?.grants ?? []).filter((g) => !declined.has(g.data_controller));
+
   // Grant = authenticate the subject (present their IdP token) then approve with
   // the scopes requested. Decline = deny. The partner never sees credentials and
   // no government approval sits in this path — it is the subject's own decision.
@@ -26,7 +39,8 @@ export default function ConsentRequestPage() {
     mutationFn: async () => {
       if (!data) return;
       await api.authenticateConsentRequest(requestId, getToken());
-      await api.approveConsentRequest(requestId, data.requested_scopes);
+      if (data.grants) await api.approveConsentRequestGrants(requestId, approvedGrants);
+      else await api.approveConsentRequest(requestId, data.requested_scopes);
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["consent-request", requestId] }),
   });
@@ -64,14 +78,37 @@ export default function ConsentRequestPage() {
               the purpose of <strong>{purposeLabel(data.purpose)}</strong>.
             </p>
 
-            <div className="consent-section">
-              <span className="consent-label">They will be able to access</span>
-              <ul className="scope-list">
-                {data.requested_scopes.map((s) => (
-                  <li key={s}>{humaniseScope(s)}</li>
+            {data.grants ? (
+              <div className="consent-section">
+                <span className="consent-label">They will be able to access, by source</span>
+                {data.grants.map((g) => (
+                  <div key={g.data_controller} style={{ marginTop: 8 }}>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={!declined.has(g.data_controller)}
+                        onChange={() => toggleSource(g.data_controller)}
+                      />{" "}
+                      <strong>{g.data_controller}</strong>
+                    </label>
+                    <ul className="scope-list">
+                      {g.data_scopes.map((s) => (
+                        <li key={s}>{humaniseScope(s)}</li>
+                      ))}
+                    </ul>
+                  </div>
                 ))}
-              </ul>
-            </div>
+              </div>
+            ) : (
+              <div className="consent-section">
+                <span className="consent-label">They will be able to access</span>
+                <ul className="scope-list">
+                  {data.requested_scopes.map((s) => (
+                    <li key={s}>{humaniseScope(s)}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {data.valid_until && (
               <div className="consent-section">
@@ -101,7 +138,11 @@ export default function ConsentRequestPage() {
               <button
                 className="btn-primary consent-grant"
                 onClick={() => approve.mutate()}
-                disabled={approve.isPending || deny.isPending}
+                disabled={
+                  approve.isPending ||
+                  deny.isPending ||
+                  (!!data.grants && approvedGrants.length === 0)
+                }
               >
                 {approve.isPending ? "Granting…" : "Grant consent"}
               </button>

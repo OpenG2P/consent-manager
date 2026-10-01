@@ -8,6 +8,7 @@ import type {
   AweTask,
   ConsentRequest,
   DecisionLog,
+  Grant,
   PagedTasks,
   Paginated,
   Partner,
@@ -54,7 +55,13 @@ const V1 = "/consent/v1";
 
 export const api = {
   // ── Partners (admin) ───────────────────────────────────────────────
-  listPartners: () => request<Partner[]>(`${V1}/partners`),
+  // `audience` narrows to one partner's bindings (one per controller).
+  listPartners: (params: { audience?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (params.audience) q.set("audience", params.audience);
+    const qs = q.toString();
+    return request<Partner[]>(`${V1}/partners${qs ? `?${qs}` : ""}`);
+  },
   getPartner: (id: string) => request<Partner>(`${V1}/partners/${id}`),
   createPartner: (data: PartnerCreate) =>
     request<Partner>(`${V1}/partners`, { method: "POST", body: JSON.stringify(data) }),
@@ -119,6 +126,13 @@ export const api = {
     request<Artefact>(`${V1}/consent-requests/${id}/approve`, {
       method: "POST",
       body: JSON.stringify({ granted_scopes: grantedScopes }),
+    }),
+  // For a request with grants: approve each controller's scopes; a controller
+  // left out is declined.
+  approveConsentRequestGrants: (id: string, grants: Grant[]) =>
+    request<Artefact>(`${V1}/consent-requests/${id}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ grants }),
     }),
   denyConsentRequest: (id: string, reason?: string) =>
     request<ConsentRequest>(`${V1}/consent-requests/${id}/deny`, {

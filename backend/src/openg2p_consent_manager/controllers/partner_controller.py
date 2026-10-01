@@ -15,7 +15,7 @@ from ..schemas.partner import (
     PolicyResponse,
     PolicyUpsert,
 )
-from ..services import PartnerService
+from ..services import PartnerConflict, PartnerService
 from ..services.awe_client import AweClient, AweClientError
 
 _config = Settings.get_config()
@@ -31,6 +31,12 @@ class PartnerController(BaseController):
     keys are owned by the Partner Management service (CM stores only the PM
     reference `partner_mgmt_id` and fetches keys at verification time). Widening a
     binding's data-share policy is gated behind AWE approval (see upsert_policy).
+
+    One partner (audience) may be bound to several data controllers: POST another
+    binding with the same ``audience`` and a different ``controller_id``. Each
+    binding has its own id and its own versioned policy (the policy endpoints are
+    per binding id), so policies are per (audience, controller). List a partner's
+    bindings with ``GET /partners?audience=...``.
     """
 
     # TODO(partner-delete): add a SOFT delete for bindings (audit-safe).
@@ -87,13 +93,25 @@ class PartnerController(BaseController):
         self,
         controller_id: Optional[str] = Query(None),
         status: Optional[str] = Query(None),
+        audience: Optional[str] = Query(
+            None, description="Only the bindings of this partner audience"
+        ),
     ):
-        partners = await self.partners.list_partners(controller_id=controller_id, status=status)
+        partners = await self.partners.list_partners(
+            controller_id=controller_id, status=status, audience=audience
+        )
         return [PartnerResponse.model_validate(p) for p in partners]
 
     async def create_partner(self, data: PartnerCreate):
         # A binding is created active; partner identity onboarding is PM's job.
-        partner = await self.partners.create_partner(data)
+        # 409 if (audience, controller_id) is already bound, or if the audience's
+        # other bindings use a different partner_mgmt_id.
+        try:
+            partner = await self.partners.create_partner(data)
+        except PartnerConflict as exc:
+            return JSONResponse(
+                status_code=409, content={"error": "conflict", "detail": exc.detail}
+            )
         return PartnerResponse.model_validate(partner)
 
     async def get_partner(self, partner_id: str):

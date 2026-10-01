@@ -143,6 +143,71 @@ class Initializer(BaseInitializer):
                         "ON partner_policies (awe_request_id)"
                     )
                 )
+
+                # ── Single consent, one grant per registry (G2P-5719) ────────
+                # A partner (audience) may now be bound to several controllers,
+                # each binding with its own policy: uniqueness moves from
+                # `audience` to (audience, controller_id). Existing rows are
+                # unchanged — each partner's controller becomes its first binding.
+                await conn.execute(
+                    text(
+                        """
+                        DO $$
+                        BEGIN
+                          IF EXISTS (
+                            SELECT 1 FROM pg_indexes
+                            WHERE tablename = 'partners'
+                              AND indexname = 'ix_partners_audience'
+                              AND indexdef ILIKE 'CREATE UNIQUE INDEX%'
+                          ) THEN
+                            DROP INDEX ix_partners_audience;
+                            CREATE INDEX ix_partners_audience ON partners (audience);
+                          END IF;
+                          IF NOT EXISTS (
+                            SELECT 1 FROM pg_constraint
+                            WHERE conname = 'uq_partner_audience_controller'
+                          ) THEN
+                            ALTER TABLE partners ADD CONSTRAINT uq_partner_audience_controller
+                              UNIQUE (audience, controller_id);
+                          END IF;
+                        END $$;
+                        """
+                    )
+                )
+                # Replay/idempotency is per (jti, data_controller): the same
+                # consent validated by two registries yields two artefacts.
+                await conn.execute(
+                    text(
+                        """
+                        DO $$
+                        BEGIN
+                          ALTER TABLE consent_artefacts
+                            DROP CONSTRAINT IF EXISTS consent_artefacts_object_jti_key;
+                          IF NOT EXISTS (
+                            SELECT 1 FROM pg_constraint
+                            WHERE conname = 'uq_artefact_jti_controller'
+                          ) THEN
+                            ALTER TABLE consent_artefacts ADD CONSTRAINT uq_artefact_jti_controller
+                              UNIQUE (object_jti, controller_id);
+                          END IF;
+                        END $$;
+                        """
+                    )
+                )
+                # Originated consents may carry several grants.
+                for table in ("consent_artefacts", "consent_requests"):
+                    await conn.execute(
+                        text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS grants JSONB")
+                    )
+                    await conn.execute(
+                        text(f"ALTER TABLE {table} ALTER COLUMN controller_id DROP NOT NULL")
+                    )
+                await conn.execute(
+                    text(
+                        "ALTER TABLE decision_logs ADD COLUMN IF NOT EXISTS "
+                        "data_controller VARCHAR(255)"
+                    )
+                )
             _logger.info("Database migration complete")
 
         asyncio.run(migrate())

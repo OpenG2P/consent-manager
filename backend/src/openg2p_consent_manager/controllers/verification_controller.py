@@ -15,13 +15,51 @@ _config = Settings.get_config()
 _logger = logging.getLogger(_config.logging_default_logger_name)
 
 
+_VALIDATE_DESCRIPTION = """
+Policy decision for one registry (data controller) presenting a partner-signed
+consent JWS.
+
+**Consent claims** (JWS payload, signed with the partner's PM-registered key):
+`jti`, `aud` (the partner's audience), `subject_id {type, value}`,
+`purpose {code}`, `fetch_type`, `validity {valid_from, valid_until}`,
+`issued_at`, and either
+
+- `grants: [{data_controller, data_scopes}]` — one consent, one grant per
+  registry; or
+- legacy `data_controller` + `data_scopes` — treated as a single grant.
+
+**Request:** `consent_jws`, optional `partner_id`, optional `data_controller`
+(the calling registry), optional `request_context {requested_scopes, subject_id}`.
+
+- Consent with `grants`: `data_controller` is required (deny `malformed_object`
+  if missing) and selects the grant (deny `controller_not_granted` if the
+  consent has none for it).
+- Legacy consent: if `data_controller` is given it must equal the consent's
+  (deny `controller_not_granted`).
+- The partner must have an active binding to that controller (deny
+  `unknown_partner`). Policies are per (partner audience, controller).
+- Effective scopes = grant scopes ∩ that binding's policy (∩
+  `requested_scopes` if sent).
+- `request_context.subject_id` with the same type as the consent subject but a
+  different value: deny `subject_mismatch`. Other types are for the registry to
+  resolve.
+- Replay/idempotency is per (`jti`, `data_controller`): the same consent
+  validated by two registries gives two decisions and two receipts; a repeat
+  for the same controller returns the stored decision.
+
+**Response:** the decision (`permit`/`deny`, `reason_code`, `detail`), and on
+permit `consent_id`, `receipt_id`, `subject_id` (the consent's subject),
+`data_controller`, `effective_data_scopes`, `valid_until`, `policy_version`.
+"""
+
+
 class VerificationController(BaseController):
     """PARTNER-api PDP endpoints — the registry/PEP hot path.
 
     Trust is NOT Keycloak: it's the partner-signed consent object, verified inside
     ``validate`` against the partner's keys from Partner Management (replay-guarded
-    by ``jti``). The partner api carries no Keycloak realm; registry↔CM is secured
-    at the transport layer (Istio mTLS / network policy).
+    per ``jti`` and data controller). The partner api carries no Keycloak realm;
+    registry↔CM is secured at the transport layer (Istio mTLS / network policy).
     """
 
     def __init__(self, **kwargs):
@@ -34,6 +72,8 @@ class VerificationController(BaseController):
         self.router.add_api_route(
             "/validate", self.validate,
             responses={200: {"model": Decision}}, methods=["POST"],
+            summary="Validate a partner-signed consent for one data controller",
+            description=_VALIDATE_DESCRIPTION,
         )
         self.router.add_api_route(
             "/consents/{consent_id}/status", self.get_status,

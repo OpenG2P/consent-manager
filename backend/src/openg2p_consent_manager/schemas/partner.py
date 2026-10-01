@@ -5,11 +5,15 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 # A "partner" here is CM's policy *binding* (PM owns the partner identity/keys).
+# One partner (audience) may have several bindings, one per data controller; each
+# binding carries its own versioned policy.
 class PartnerCreate(BaseModel):
     # Reference to the Partner-Management partner whose keys verify this partner's
-    # consent objects. When omitted, CM falls back to `audience` as the PM ref.
+    # consent objects. When omitted, CM uses the PM ref of the audience's existing
+    # bindings, else falls back to `audience`.
     partner_mgmt_id: Optional[str] = Field(None, max_length=255)
     audience: str = Field(..., min_length=1, max_length=255)
+    # Unique per audience: (audience, controller_id) identifies the binding.
     controller_id: str = Field(..., min_length=1, max_length=255)
     # Optional display label (identity is authoritative in Partner Management).
     name: Optional[str] = Field(None, max_length=255)
@@ -17,7 +21,8 @@ class PartnerCreate(BaseModel):
 
 class PartnerUpdate(BaseModel):
     name: Optional[str] = None
-    status: Optional[str] = None  # active | suspended
+    status: Optional[str] = None  # active | suspended (this binding only)
+    # Partner identity: applied to every binding of the audience.
     partner_mgmt_id: Optional[str] = None
 
 

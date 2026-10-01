@@ -18,6 +18,11 @@ class ReasonCode(str, Enum):
     expired = "expired"
     revoked = "revoked"
     replay = "replay"
+    # The consent has no grant for the data_controller named in the request
+    # (or, for a legacy consent, the named controller differs from the consent's).
+    controller_not_granted = "controller_not_granted"
+    # request_context.subject_id has the consent subject's type but another value.
+    subject_mismatch = "subject_mismatch"
 
 
 class SubjectId(BaseModel):

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
-import type { PartnerPolicy, PolicyUpsert } from "../api/types";
+import type { Partner, PartnerPolicy, PolicyUpsert } from "../api/types";
 
 export default function PartnerDetailPage() {
   const { id = "" } = useParams();
@@ -59,6 +59,8 @@ export default function PartnerDetailPage() {
         </table>
       </div>
 
+      <ControllerBindings partner={p} />
+
       <div className="notice notice-info">
         <strong>Signing keys are managed in Partner Management.</strong> The Consent Manager
         fetches this partner's public keys from PM (by its Partner Management ID) to verify
@@ -66,6 +68,70 @@ export default function PartnerDetailPage() {
       </div>
 
       <PolicySection partnerId={id} />
+    </div>
+  );
+}
+
+// ── All controller bindings of this partner (same audience) ──────────────
+// A partner can be bound to several controllers (registries), each binding with
+// its own policy. A consent with grants is validated by each controller against
+// that controller's binding.
+function ControllerBindings({ partner }: { partner: Partner }) {
+  const bindings = useQuery({
+    queryKey: ["partners", { audience: partner.audience }],
+    queryFn: () => api.listPartners({ audience: partner.audience }),
+  });
+
+  const addParams = new URLSearchParams({ audience: partner.audience });
+  if (partner.partner_mgmt_id) addParams.set("partner_mgmt_id", partner.partner_mgmt_id);
+  if (partner.name) addParams.set("name", partner.name);
+
+  return (
+    <div className="card">
+      <div className="spread">
+        <h3 className="card-title" style={{ margin: 0 }}>
+          Controller bindings for this partner
+        </h3>
+        <Link to={`/partners/new?${addParams.toString()}`} className="btn-secondary">
+          Add controller binding
+        </Link>
+      </div>
+      <p className="muted">
+        Each controller has its own binding and policy. The policy below is for{" "}
+        <code className="mono">{partner.controller_id}</code> only.
+      </p>
+      {bindings.isLoading && <p className="loading">Loading bindings…</p>}
+      {bindings.data && (
+        <table className="data">
+          <thead>
+            <tr>
+              <th>Controller</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {bindings.data.map((b) => (
+              <tr key={b.id}>
+                <td>
+                  {b.id === partner.id ? (
+                    <>
+                      <code className="mono">{b.controller_id}</code>{" "}
+                      <span className="muted">(this binding)</span>
+                    </>
+                  ) : (
+                    <Link to={`/partners/${b.id}`}>
+                      <code className="mono">{b.controller_id}</code>
+                    </Link>
+                  )}
+                </td>
+                <td>
+                  <span className={`badge badge-${b.status}`}>{b.status}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }

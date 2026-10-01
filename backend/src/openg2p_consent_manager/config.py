@@ -55,10 +55,11 @@ class Settings(BaseSettings):
     # is signing with the public bundled demo key (must be replaced for production).
     cm_signing_is_demo: bool = False
 
-    # NOTE: the data controller / module is a per-partner attribute
-    # (Partner.controller_id), set at onboarding — one shared CM serves many
-    # modules. A consent object's data_controller is validated against the
-    # onboarded partner's controller_id, so there is no single global controller.
+    # NOTE: the data controller / module is a per-binding attribute
+    # (Partner.controller_id) — one shared CM serves many modules, and one
+    # partner may be bound to several controllers (one binding + policy each).
+    # /validate selects the consent's grant for the calling controller and
+    # evaluates it against that (audience, controller) binding's policy.
 
     # Replay window for embedded consent objects (seconds). issued_at must be
     # within now ± this skew.
