@@ -115,21 +115,6 @@ class VerificationService(BaseService):
                 now, ctx_hash, jti=obj.jti, data_controller=controller,
             )
 
-        # Idempotency: the same object (jti) presented for the same controller
-        # returns its existing decision. Keyed per (jti, controller), so one
-        # consent validated by two registries gets two decisions and receipts.
-        existing = await self._existing_artefact(obj.jti, controller)
-        if existing is not None:
-            if self._subject_mismatch(
-                ctx_subject, existing.subject_id_type, existing.subject_id_value
-            ):
-                return await self._deny(
-                    ReasonCode.subject_mismatch,
-                    "request_context.subject_id does not match the consent subject",
-                    now, ctx_hash, jti=obj.jti, data_controller=controller,
-                )
-            return self._decision_from_artefact(existing, now)
-
         # 2. Known party — the partner's binding to this controller + the
         #    binding's policy (cached). Policies are per (audience, controller).
         material = await self.partners.get_verification_material(obj.aud, controller)
@@ -167,6 +152,36 @@ class VerificationService(BaseService):
                 now, ctx_hash, partner_id=partner.id, jti=obj.jti, data_controller=controller,
                 policy_version=policy_version,
             )
+
+        # Idempotency: the same object (jti) presented again for the same
+        # controller returns its existing decision. Keyed per (jti, controller),
+        # so one consent validated by two registries gets two decisions and
+        # receipts. Checked only AFTER the binding and the signature: a stored
+        # decision is never handed to an unsigned or altered object reusing a
+        # known jti. The stored consent must also be this one — same partner
+        # binding, subject and scopes — or the jti is being reused.
+        existing = await self._existing_artefact(obj.jti, controller)
+        if existing is not None:
+            if (
+                existing.partner_id != partner.id
+                or existing.subject_id_type != obj.subject_id.type
+                or existing.subject_id_value != obj.subject_id.value
+                or sorted(existing.data_scopes or []) != sorted(grant.data_scopes or [])
+            ):
+                return await self._deny(
+                    ReasonCode.replay, "jti already used for a different consent",
+                    now, ctx_hash, partner_id=partner.id, jti=obj.jti, data_controller=controller,
+                    policy_version=policy_version,
+                )
+            if self._subject_mismatch(
+                ctx_subject, existing.subject_id_type, existing.subject_id_value
+            ):
+                return await self._deny(
+                    ReasonCode.subject_mismatch,
+                    "request_context.subject_id does not match the consent subject",
+                    now, ctx_hash, jti=obj.jti, data_controller=controller,
+                )
+            return self._decision_from_artefact(existing, now)
 
         # 10. Replay / freshness — issued_at within the configured window.
         issued_at = _aware(obj.issued_at)

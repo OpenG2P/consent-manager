@@ -145,6 +145,35 @@ def test_tampered_grants_fail_signature(call, two_registry_partner):
     assert dec["decision"] == "deny" and dec["reason_code"] == "signature_invalid"
 
 
+def test_known_jti_with_forged_signature_gets_no_stored_permit(call, two_registry_partner):
+    """A stored decision is returned only after the signature is verified: an
+    altered object reusing a jti that already has a permit is denied."""
+    import base64
+    import json
+
+    p = two_registry_partner
+    claims = p.claims(grants=GRANTS)
+    jws = p.sign(claims)
+    assert validate(call, jws, CSR)["decision"] == "permit"
+
+    header, _, sig = jws.split(".")
+    forged = dict(claims, subject_id={"type": "FAYDA_FAN", "value": "999999999999"})
+    payload = base64.urlsafe_b64encode(json.dumps(forged).encode()).rstrip(b"=").decode()
+    dec = validate(call, f"{header}.{payload}.{sig}", CSR)
+    assert dec["decision"] == "deny" and dec["reason_code"] == "signature_invalid"
+
+
+def test_known_jti_reused_for_a_different_consent_is_denied(call, two_registry_partner):
+    """The partner signs a new consent but reuses a jti: it is not the stored consent."""
+    p = two_registry_partner
+    claims = p.claims(grants=GRANTS)
+    assert validate(call, p.sign(claims), CSR)["decision"] == "permit"
+
+    reused = dict(claims, subject_id={"type": "FAYDA_FAN", "value": "999999999999"})
+    dec = validate(call, p.sign(reused), CSR)
+    assert dec["decision"] == "deny" and dec["reason_code"] == "replay"
+
+
 # ── legacy consent ────────────────────────────────────────────────────────────
 
 
