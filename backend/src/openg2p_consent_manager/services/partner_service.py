@@ -275,6 +275,29 @@ class PartnerService(BaseService):
             )
             return list(result.scalars().all())
 
+    async def known_values(self) -> dict:
+        """Values already in use, offered as form suggestions: controller ids of
+        bindings and the scopes / purposes / subject id types of policies. These
+        are open sets (registry-defined), so this is a hint, not a constraint."""
+        async with async_session()() as session:
+            controllers = await session.execute(
+                select(Partner.controller_id).distinct().order_by(Partner.controller_id)
+            )
+            out = {"controller_ids": [c for (c,) in controllers.all() if c]}
+            for key, column in (
+                ("data_scopes", PartnerPolicy.allowed_data_scopes),
+                ("purposes", PartnerPolicy.allowed_purposes),
+                ("subject_id_types", PartnerPolicy.allowed_subject_id_types),
+            ):
+                value = func.jsonb_array_elements_text(column).label("v")
+                rows = await session.execute(select(value).distinct())
+                out[key] = sorted({v for (v,) in rows.all() if v})
+        if _config.subject_default_id_type not in out["subject_id_types"]:
+            out["subject_id_types"] = sorted(
+                out["subject_id_types"] + [_config.subject_default_id_type]
+            )
+        return out
+
     async def get_policy(
         self, partner_id: str, version: Optional[int] = None
     ) -> Optional[PartnerPolicy]:
@@ -298,15 +321,18 @@ class PartnerService(BaseService):
         (no active prior) counts as a widening (a grant from nothing)."""
         if active is None:
             return True
-        for field in (
-            "allowed_data_scopes",
-            "allowed_purposes",
-            "allowed_subject_id_types",
-            "allowed_signing_algs",
-        ):
+        # An empty data-scope list allows nothing.
+        new_scopes = set(getattr(data, "allowed_data_scopes", None) or [])
+        if new_scopes - set(getattr(active, "allowed_data_scopes", None) or []):
+            return True
+        # For these, an empty list means "any" (see policy_service and
+        # verification_service): clearing a non-empty list widens to everything.
+        for field in ("allowed_purposes", "allowed_subject_id_types", "allowed_signing_algs"):
             new_set = set(getattr(data, field, None) or [])
             old_set = set(getattr(active, field, None) or [])
-            if new_set - old_set:
+            if not old_set:
+                continue  # already "any": nothing can widen it
+            if not new_set or new_set - old_set:
                 return True
         if PartnerService._duration_loosened(
             data.max_validity_duration, active.max_validity_duration

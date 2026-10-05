@@ -56,6 +56,22 @@ export interface PartnerPolicy extends PolicyUpsert {
   status: PolicyStatus;
   awe_request_id?: string | null;
   effective_from?: string | null;
+  // Values the current rules reject (a version saved before them). Such a
+  // version still loads; it must be fixed before it can be saved again.
+  issues?: string[];
+}
+
+// GET /consent/v1/meta — the allowed values the API validates against, so the
+// forms never hard-code them. `known_*` are open sets: values already in use,
+// offered only as suggestions.
+export interface PolicyMeta {
+  signing_algorithms: string[];
+  fetch_types: string[];
+  partner_statuses: string[];
+  known_controller_ids: string[];
+  known_data_scopes: string[];
+  known_purposes: string[];
+  known_subject_id_types: string[];
 }
 
 // ── AWE approval tasks (approver inbox — proxied to AWE) ──────────────────

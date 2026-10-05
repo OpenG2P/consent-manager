@@ -2,7 +2,17 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
-import type { Partner, PartnerPolicy, PolicyUpsert } from "../api/types";
+import type { Partner, PartnerPolicy, PolicyMeta, PolicyUpsert } from "../api/types";
+import {
+  CheckboxGroup,
+  DurationInput,
+  ListTextarea,
+  durationError,
+  humaniseDuration,
+} from "../components/FormControls";
+
+const FETCH_TYPE_LABELS: Record<string, string> = { oneshot: "One-shot", periodic: "Periodic" };
+const fetchTypeLabel = (v: string) => FETCH_TYPE_LABELS[v] ?? v;
 
 export default function PartnerDetailPage() {
   const { id = "" } = useParams();
@@ -146,6 +156,8 @@ function PolicySection({ partnerId }: { partnerId: string }) {
     queryFn: () => api.listPolicies(partnerId),
     retry: false,
   });
+  // Allowed values for the form (served by the API it validates against).
+  const meta = useQuery({ queryKey: ["meta"], queryFn: () => api.getMeta() });
 
   const save = useMutation({
     mutationFn: (data: PolicyUpsert) => api.putPolicy(partnerId, data),
@@ -161,8 +173,17 @@ function PolicySection({ partnerId }: { partnerId: string }) {
 
   // Show the form when editing, or when there is nothing to display yet.
   if (editing || (list.length === 0 && !versions.isLoading)) {
+    if (meta.isLoading) return <div className="loading">Loading policy options…</div>;
+    if (!meta.data)
+      return (
+        <div className="notice notice-error">
+          Could not load the allowed policy values.{" "}
+          {meta.error instanceof ApiError ? meta.error.message : ""}
+        </div>
+      );
     return (
       <PolicyForm
+        meta={meta.data}
         initial={active}
         pending={save.isPending}
         error={save.error instanceof ApiError ? save.error.message : undefined}
@@ -206,30 +227,60 @@ function PolicySection({ partnerId }: { partnerId: string }) {
 
         {versions.isLoading && <p className="loading">Loading policy…</p>}
 
+        {active?.issues && active.issues.length > 0 && (
+          <div className="notice notice-error" style={{ marginTop: 16 }}>
+            <strong>This policy has values the current rules reject.</strong> It is still in
+            force as stored; fix these when you next edit it:
+            <ul style={{ margin: "6px 0 0" }}>
+              {active.issues.map((i) => (
+                <li key={i}>
+                  <code className="mono">{i}</code>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {active ? (
           <table className="data">
             <tbody>
               <PolicyRow label="Allowed data scopes" values={active.allowed_data_scopes} />
               <PolicyRow label="Allowed purposes" values={active.allowed_purposes} />
               <PolicyRow label="Allowed subject ID types" values={active.allowed_subject_id_types} />
-              <PolicyRow label="Allowed signing algs" values={active.allowed_signing_algs} />
+              <PolicyRow
+                label="Allowed signing algs"
+                values={active.allowed_signing_algs}
+                allowed={meta.data?.signing_algorithms}
+              />
               <tr>
                 <th style={{ width: 220 }}>Max validity</th>
-                <td>{humaniseDuration(active.max_validity_duration)}</td>
+                <td>
+                  <DurationCell value={active.max_validity_duration} />
+                </td>
               </tr>
               <tr>
                 <th>Fetch type</th>
-                <td>{active.fetch_type}</td>
+                <td>
+                  {meta.data && !meta.data.fetch_types.includes(active.fetch_type) ? (
+                    <span className="chip invalid">{active.fetch_type} (not supported)</span>
+                  ) : (
+                    fetchTypeLabel(active.fetch_type)
+                  )}
+                </td>
               </tr>
               {active.fetch_type === "periodic" && (
                 <tr>
                   <th>Min interval between fetches</th>
-                  <td>{humaniseDuration(active.max_fetch_frequency)}</td>
+                  <td>
+                    <DurationCell value={active.max_fetch_frequency} />
+                  </td>
                 </tr>
               )}
               <tr>
                 <th>Data life</th>
-                <td>{humaniseDuration(active.data_life)}</td>
+                <td>
+                  <DurationCell value={active.data_life} />
+                </td>
               </tr>
             </tbody>
           </table>
@@ -266,6 +317,11 @@ function VersionHistory({ versions }: { versions: PartnerPolicy[] }) {
               <td>v{v.version}</td>
               <td>
                 <span className={`badge badge-${v.status}`}>{v.status}</span>
+                {v.issues && v.issues.length > 0 && (
+                  <span className="chip invalid" title={v.issues.join("\n")} style={{ marginLeft: 8 }}>
+                    needs fixing
+                  </span>
+                )}
               </td>
               <td className="muted">{v.allowed_data_scopes.length} scope(s)</td>
               <td className="muted">
@@ -279,18 +335,40 @@ function VersionHistory({ versions }: { versions: PartnerPolicy[] }) {
   );
 }
 
-function PolicyRow({ label, values }: { label: string; values: string[] }) {
+// A stored duration; one the current rules reject is flagged, not hidden.
+function DurationCell({ value }: { value?: string | null }) {
+  if (durationError(value))
+    return <span className="chip invalid">{value} (not a valid duration)</span>;
+  return <>{humaniseDuration(value)}</>;
+}
+
+// `allowed`, when given, flags values outside it (a policy saved before validation).
+function PolicyRow({
+  label,
+  values,
+  allowed,
+}: {
+  label: string;
+  values: string[];
+  allowed?: string[];
+}) {
   return (
     <tr>
       <th style={{ width: 220 }}>{label}</th>
       <td>
         <div className="chips">
           {values.length === 0 && <span className="muted">—</span>}
-          {values.map((v) => (
-            <span key={v} className="chip selected">
-              {v}
-            </span>
-          ))}
+          {values.map((v) =>
+            allowed && !allowed.includes(v) ? (
+              <span key={v} className="chip invalid" title="Not a supported value">
+                {v} (not supported)
+              </span>
+            ) : (
+              <span key={v} className="chip selected">
+                {v}
+              </span>
+            )
+          )}
         </div>
       </td>
     </tr>
@@ -309,112 +387,149 @@ const DEFAULT_POLICY: PolicyUpsert = {
 };
 
 function PolicyForm({
+  meta,
   initial,
   onSave,
   onCancel,
   pending,
   error,
 }: {
+  meta: PolicyMeta;
   initial?: PolicyUpsert;
   onSave: (data: PolicyUpsert) => void;
   onCancel?: () => void;
   pending: boolean;
   error?: string;
 }) {
-  const [form, setForm] = useState<PolicyUpsert>(initial ?? DEFAULT_POLICY);
+  const [form, setForm] = useState<PolicyUpsert>(() => {
+    if (!initial) {
+      // Only pre-tick algorithms the verifier accepts.
+      const algs = DEFAULT_POLICY.allowed_signing_algs.filter((a) =>
+        meta.signing_algorithms.includes(a)
+      );
+      return { ...DEFAULT_POLICY, allowed_signing_algs: algs };
+    }
+    // Copy only the policy fields (not id/version/issues of the active version).
+    return {
+      allowed_data_scopes: initial.allowed_data_scopes ?? [],
+      allowed_purposes: initial.allowed_purposes ?? [],
+      allowed_subject_id_types: initial.allowed_subject_id_types ?? [],
+      allowed_signing_algs: initial.allowed_signing_algs ?? [],
+      max_validity_duration: initial.max_validity_duration ?? null,
+      fetch_type: initial.fetch_type,
+      max_fetch_frequency: initial.max_fetch_frequency ?? null,
+      data_life: initial.data_life ?? null,
+    };
+  });
+  const set = <K extends keyof PolicyUpsert>(k: K) => (v: PolicyUpsert[K]) =>
+    setForm((f) => ({ ...f, [k]: v }));
 
-  const csv = (k: keyof PolicyUpsert) => (e: React.ChangeEvent<HTMLTextAreaElement>) =>
-    setForm((f) => ({
-      ...f,
-      [k]: e.target.value
-        .split(/[\n,]/)
-        .map((s) => s.trim())
-        .filter(Boolean),
-    }));
-
-  const listVal = (v: string[]) => v.join("\n");
+  // Same rules as the API, so the form cannot submit what it would reject.
+  const badAlgs = form.allowed_signing_algs.filter((a) => !meta.signing_algorithms.includes(a));
+  const algError =
+    form.allowed_signing_algs.length === 0
+      ? "Select at least one algorithm."
+      : badAlgs.length
+        ? `Untick unsupported: ${badAlgs.join(", ")}.`
+        : null;
+  const fetchTypeOk = meta.fetch_types.includes(form.fetch_type);
+  const durationsOk = [form.max_validity_duration, form.max_fetch_frequency, form.data_life].every(
+    (d) => !durationError(d)
+  );
+  const valid = !algError && fetchTypeOk && durationsOk;
+  // Also show the periodic fields when a stored value there needs fixing.
+  const showPeriodic =
+    form.fetch_type === "periodic" ||
+    !!durationError(form.max_fetch_frequency) ||
+    !!durationError(form.data_life);
 
   return (
     <form
       className="card"
       onSubmit={(e) => {
         e.preventDefault();
-        onSave(form);
+        if (valid) onSave(form);
       }}
     >
       <h3 className="card-title">{initial ? "Edit policy" : "Define policy"}</h3>
       <p className="muted" style={{ marginTop: -8 }}>
         The policy is the outer bound on every consent. Effective fields returned to the registry
-        are always the consent's scope ∩ this policy. One entry per line (or comma-separated).
+        are always the consent's scope ∩ this policy. Lists: one entry per line (or
+        comma-separated); an empty purpose or subject-ID-type list allows any.
       </p>
 
-      <div className="field">
-        <label>Allowed data scopes</label>
-        <textarea value={listVal(form.allowed_data_scopes)} onChange={csv("allowed_data_scopes")} placeholder="farmer_profile.basic&#10;farmer_profile.landholding" />
-      </div>
-      <div className="field">
-        <label>Allowed purposes</label>
-        <textarea value={listVal(form.allowed_purposes)} onChange={csv("allowed_purposes")} placeholder="loan_origination&#10;subsidy_verification" />
-      </div>
-      <div className="field">
-        <label>Allowed subject ID types</label>
-        <textarea value={listVal(form.allowed_subject_id_types)} onChange={csv("allowed_subject_id_types")} placeholder="national_id&#10;farmer_id" />
-      </div>
-      <div className="field">
-        <label>Allowed signing algorithms</label>
-        <textarea value={listVal(form.allowed_signing_algs)} onChange={csv("allowed_signing_algs")} placeholder="EdDSA&#10;ES256" />
-      </div>
+      <ListTextarea
+        label="Allowed data scopes"
+        value={form.allowed_data_scopes}
+        onChange={set("allowed_data_scopes")}
+        suggestions={meta.known_data_scopes}
+        placeholder={"farmer_profile.basic\nfarmer_profile.landholding"}
+      />
+      <ListTextarea
+        label="Allowed purposes"
+        value={form.allowed_purposes}
+        onChange={set("allowed_purposes")}
+        suggestions={meta.known_purposes}
+        placeholder={"loan_origination\nsubsidy_verification"}
+      />
+      <ListTextarea
+        label="Allowed subject ID types"
+        value={form.allowed_subject_id_types}
+        onChange={set("allowed_subject_id_types")}
+        suggestions={meta.known_subject_id_types}
+        placeholder={"national_id\nfarmer_id"}
+      />
+      <CheckboxGroup
+        label="Allowed signing algorithms"
+        options={meta.signing_algorithms}
+        value={form.allowed_signing_algs}
+        onChange={set("allowed_signing_algs")}
+        error={algError}
+        hint="JWS algorithms the partner may sign consent objects with."
+      />
 
       <div className="row" style={{ alignItems: "flex-start", gap: 24 }}>
-        <div className="field" style={{ flex: 1 }}>
-          <label>Max validity</label>
-          <input
-            type="text"
-            value={form.max_validity_duration ?? ""}
-            onChange={(e) =>
-              setForm((f) => ({ ...f, max_validity_duration: e.target.value.trim() || null }))
-            }
-            placeholder="P30D"
+        <div style={{ flex: 1 }}>
+          <DurationInput
+            label="Max validity"
+            value={form.max_validity_duration}
+            onChange={set("max_validity_duration")}
           />
-          <div className="hint">
-            ISO-8601 duration — {humaniseDuration(form.max_validity_duration)}
-          </div>
         </div>
         <div className="field" style={{ flex: 1 }}>
-          <label>Fetch type</label>
+          <label htmlFor="policy-fetch-type">Fetch type</label>
           <select
+            id="policy-fetch-type"
             value={form.fetch_type}
-            onChange={(e) => setForm((f) => ({ ...f, fetch_type: e.target.value as PolicyUpsert["fetch_type"] }))}
+            onChange={(e) => set("fetch_type")(e.target.value as PolicyUpsert["fetch_type"])}
           >
-            <option value="oneshot">One-shot</option>
-            <option value="periodic">Periodic</option>
+            {!fetchTypeOk && (
+              <option value={form.fetch_type} disabled>
+                {form.fetch_type} (not supported)
+              </option>
+            )}
+            {meta.fetch_types.map((t) => (
+              <option key={t} value={t}>
+                {fetchTypeLabel(t)}
+              </option>
+            ))}
           </select>
+          {!fetchTypeOk && <div className="field-error">Choose a supported fetch type.</div>}
         </div>
       </div>
 
-      {form.fetch_type === "periodic" && (
+      {showPeriodic && (
         <div className="row" style={{ alignItems: "flex-start", gap: 24 }}>
-          <div className="field" style={{ flex: 1 }}>
-            <label>Min interval between fetches</label>
-            <input
-              type="text"
-              value={form.max_fetch_frequency ?? ""}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, max_fetch_frequency: e.target.value.trim() || null }))
-              }
-              placeholder="P1D"
+          <div style={{ flex: 1 }}>
+            <DurationInput
+              label="Min interval between fetches"
+              noneLabel="Not set"
+              value={form.max_fetch_frequency}
+              onChange={set("max_fetch_frequency")}
             />
-            <div className="hint">ISO-8601 duration — {humaniseDuration(form.max_fetch_frequency)}</div>
           </div>
-          <div className="field" style={{ flex: 1 }}>
-            <label>Data life</label>
-            <input
-              type="text"
-              value={form.data_life ?? ""}
-              onChange={(e) => setForm((f) => ({ ...f, data_life: e.target.value.trim() || null }))}
-              placeholder="P30D"
-            />
-            <div className="hint">ISO-8601 duration — {humaniseDuration(form.data_life)}</div>
+          <div style={{ flex: 1 }}>
+            <DurationInput label="Data life" value={form.data_life} onChange={set("data_life")} />
           </div>
         </div>
       )}
@@ -426,7 +541,7 @@ function PolicyForm({
       </div>
 
       <div className="row">
-        <button type="submit" className="btn-primary" disabled={pending}>
+        <button type="submit" className="btn-primary" disabled={pending || !valid}>
           {pending ? "Saving…" : "Save policy"}
         </button>
         {onCancel && (
@@ -437,26 +552,4 @@ function PolicyForm({
       </div>
     </form>
   );
-}
-
-// Render an ISO-8601 duration (P1Y, P30D, PT12H, P1DT6H) in plain words.
-function humaniseDuration(iso?: string | null): string {
-  if (!iso) return "—";
-  const m = /^P(?:(\d+)Y)?(?:(\d+)M)?(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/.exec(
-    iso.trim()
-  );
-  if (!m) return iso;
-  const units: [string, string][] = [
-    [m[1], "year"],
-    [m[2], "month"],
-    [m[3], "week"],
-    [m[4], "day"],
-    [m[5], "hour"],
-    [m[6], "minute"],
-    [m[7], "second"],
-  ];
-  const parts = units
-    .filter(([v]) => v)
-    .map(([v, label]) => `${v} ${label}${Number(v) > 1 ? "s" : ""}`);
-  return parts.length ? parts.join(", ") : iso;
 }

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import type { PartnerCreate } from "../api/types";
@@ -24,6 +24,8 @@ export default function PartnerOnboardPage() {
   });
   const navigate = useNavigate();
   const qc = useQueryClient();
+  // Controllers are an open set (any registry); offer the ones already bound.
+  const meta = useQuery({ queryKey: ["meta"], queryFn: () => api.getMeta() });
 
   const create = useMutation({
     mutationFn: () =>
@@ -103,16 +105,24 @@ export default function PartnerOnboardPage() {
         </div>
 
         <div className="field">
-          <label>Controller ID</label>
+          <label htmlFor="binding-controller-id">Controller ID</label>
           <input
+            id="binding-controller-id"
             type="text"
+            list="known-controller-ids"
             value={form.controller_id}
             onChange={set("controller_id")}
             placeholder="farmer-registry"
           />
+          <datalist id="known-controller-ids">
+            {(meta.data?.known_controller_ids ?? []).map((c) => (
+              <option key={c} value={c} />
+            ))}
+          </datalist>
           <div className="hint">
             The registry (data controller) this binding is for. One Consent Manager serves several
-            controllers; the same partner may be bound to more than one.
+            controllers; the same partner may be bound to more than one. Pick a controller already
+            in use or type a new one.
           </div>
         </div>
 

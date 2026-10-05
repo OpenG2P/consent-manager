@@ -15,6 +15,7 @@ import type {
   PartnerCreate,
   PartnerPolicy,
   PartnerUpdate,
+  PolicyMeta,
   PolicyUpsert,
   RevokeResponse,
 } from "./types";
@@ -44,7 +45,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const text = await res.text();
   const body = text ? JSON.parse(text) : undefined;
   if (!res.ok) {
-    const detail = body?.detail ?? body?.error ?? body?.message ?? res.statusText;
+    // The platform's validation errors arrive as 400 {"errors": [{code, message}]}.
+    const listed = Array.isArray(body?.errors)
+      ? body.errors.map((e: { message?: string }) => e.message).filter(Boolean).join("; ")
+      : undefined;
+    const detail = listed || (body?.detail ?? body?.error ?? body?.message ?? res.statusText);
     const reason = body?.reason_code ?? body?.reason;
     throw new ApiError(res.status, typeof detail === "string" ? detail : JSON.stringify(detail), reason);
   }
@@ -54,6 +59,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 const V1 = "/consent/v1";
 
 export const api = {
+  // Allowed values for the binding/policy forms (staff).
+  getMeta: () => request<PolicyMeta>(`${V1}/meta`),
+
   // ── Partners (admin) ───────────────────────────────────────────────
   // `audience` narrows to one partner's bindings (one per controller).
   listPartners: (params: { audience?: string } = {}) => {

@@ -12,6 +12,7 @@ from .controllers import (
     AweController,
     DecisionsController,
     LifecycleController,
+    MetaController,
     PartnerController,
     SubjectController,
     VerificationController,
@@ -76,6 +77,7 @@ class Initializer(BaseInitializer):
         if staff:
             # STAFF api — Keycloak staff realm. Policy admin, approvals, decisions.
             PartnerController().post_init()
+            MetaController().post_init()
             AweController().post_init()
             DecisionsController().post_init()
         if beneficiary:
