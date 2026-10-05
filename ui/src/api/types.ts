@@ -32,9 +32,14 @@ export interface PartnerUpdate {
 
 export type FetchType = "oneshot" | "periodic";
 
-// A versioned data-share policy's lifecycle: `pending` awaits AWE approval;
-// `active` is in force; `superseded`/`rejected` are historical.
-export type PolicyStatus = "pending" | "active" | "superseded" | "rejected";
+// A versioned data-share policy's lifecycle: `pending` awaits AWE approval (at
+// most one per binding); `active` is in force; `superseded` / `rejected` are
+// historical. `failed`: the submission to AWE failed. `stale`: approved, but the
+// active policy changed after it was submitted, so it was not applied.
+// failed / stale / rejected versions can be resubmitted.
+export type PolicyStatus = "pending" | "active" | "superseded" | "rejected" | "failed" | "stale";
+
+export const RESUBMITTABLE: PolicyStatus[] = ["failed", "stale", "rejected"];
 
 // Durations are ISO-8601 duration strings (e.g. "P1Y", "P30D", "PT12H"),
 // matching the backend. max_fetch_frequency is likewise a string (e.g. "P1D").
@@ -55,6 +60,10 @@ export interface PartnerPolicy extends PolicyUpsert {
   version: number;
   status: PolicyStatus;
   awe_request_id?: string | null;
+  // Version that was active when this one was created (0 = none).
+  base_version?: number | null;
+  // Why the version ended failed / stale / rejected.
+  status_reason?: string | null;
   effective_from?: string | null;
   // Values the current rules reject (a version saved before them). Such a
   // version still loads; it must be fixed before it can be saved again.

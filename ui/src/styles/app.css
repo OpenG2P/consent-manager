@@ -152,6 +152,7 @@ code.mono {
   color: #1e7e45;
 }
 .badge-pending,
+.badge-stale,
 .badge-in_review {
   background: rgba(245, 187, 26, 0.2);
   color: #8a6a07;
@@ -160,6 +161,7 @@ code.mono {
 .badge-revoked,
 .badge-denied,
 .badge-rejected,
+.badge-failed,
 .badge-expired,
 .badge-deny {
   background: rgba(192, 57, 43, 0.12);

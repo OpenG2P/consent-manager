@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from ..auth import require_role
 from ..config import Settings
-from ..services.awe_client import AweClient, AweClientError
+from ..services.awe_client import ACTIONABLE, AweClient, AweClientError
 from ..services.awe_webhook_service import AweWebhookService, WebhookError
 
 _config = Settings.get_config()
@@ -108,7 +108,10 @@ class AweController(BaseController):
 
     async def list_my_tasks(
         self,
-        status: Optional[str] = Query("open"),
+        status: Optional[str] = Query(
+            ACTIONABLE,
+            description="`actionable` (default) = open or claimed; or any AWE task status",
+        ),
         artifact_type: Optional[str] = Query("consent_manager.policy_change"),
         page: int = Query(1, ge=1),
         page_size: int = Query(25, ge=1, le=100),

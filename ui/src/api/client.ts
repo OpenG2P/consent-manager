@@ -82,6 +82,10 @@ export const api = {
   listPolicies: (id: string) => request<PartnerPolicy[]>(`${V1}/partners/${id}/policies`),
   putPolicy: (id: string, data: PolicyUpsert) =>
     request<PartnerPolicy>(`${V1}/partners/${id}/policy`, { method: "PUT", body: JSON.stringify(data) }),
+  // Copy a failed / stale / rejected version into a new version and save it
+  // again (re-evaluated against the current active policy).
+  resubmitPolicy: (id: string, version: number) =>
+    request<PartnerPolicy>(`${V1}/partners/${id}/policies/${version}/resubmit`, { method: "POST" }),
 
   // ── Decisions (admin status/audit view) ────────────────────────────
   listDecisions: (params: { partner_id?: string; decision?: string; limit?: number } = {}) => {
@@ -93,9 +97,10 @@ export const api = {
   },
 
   // ── AWE approvals (approver inbox — proxied to AWE with the approver JWT) ──
+  // status "actionable" (default) = open or claimed tasks.
   listMyTasks: (params: { status?: string; page?: number; page_size?: number } = {}) => {
     const q = new URLSearchParams();
-    q.set("status", params.status ?? "open");
+    q.set("status", params.status ?? "actionable");
     q.set("page", String(params.page ?? 1));
     q.set("page_size", String(params.page_size ?? 25));
     return request<PagedTasks>(`${V1}/awe/tasks?${q.toString()}`);

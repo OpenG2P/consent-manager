@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
+import { RESUBMITTABLE } from "../api/types";
 import type { Partner, PartnerPolicy, PolicyMeta, PolicyUpsert } from "../api/types";
 import {
   CheckboxGroup,
@@ -161,15 +162,22 @@ function PolicySection({ partnerId }: { partnerId: string }) {
 
   const save = useMutation({
     mutationFn: (data: PolicyUpsert) => api.putPolicy(partnerId, data),
-    onSuccess: () => {
-      setEditing(false);
-      qc.invalidateQueries({ queryKey: ["policies", partnerId] });
-    },
+    onSuccess: () => setEditing(false),
+    // Also on error: a failed AWE submission still records a (failed) version.
+    onSettled: () => qc.invalidateQueries({ queryKey: ["policies", partnerId] }),
+  });
+  const resubmit = useMutation({
+    mutationFn: (version: number) => api.resubmitPolicy(partnerId, version),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["policies", partnerId] }),
   });
 
   const list = versions.data ?? [];
   const active = list.find((p) => p.status === "active");
   const pending = list.find((p) => p.status === "pending");
+  // The newest version, if it ended without taking effect (failed / stale /
+  // rejected): surfaced so the admin can resubmit it.
+  const latest = list[0];
+  const unresolved = latest && RESUBMITTABLE.includes(latest.status) ? latest : undefined;
 
   // Show the form when editing, or when there is nothing to display yet.
   if (editing || (list.length === 0 && !versions.isLoading)) {
@@ -195,11 +203,35 @@ function PolicySection({ partnerId }: { partnerId: string }) {
 
   return (
     <div>
+      {resubmit.error instanceof ApiError && (
+        <div className="notice notice-error">{resubmit.error.message}</div>
+      )}
+
+      {unresolved && !pending && (
+        <div className={`notice ${unresolved.status === "stale" ? "notice-pending" : "notice-error"}`}>
+          <strong>
+            Policy v{unresolved.version} was {unresolvedLabel(unresolved.status)}.
+          </strong>{" "}
+          {unresolved.status_reason}{" "}
+          {active ? `The active policy (v${active.version}) is unchanged.` : ""}
+          <div style={{ marginTop: 8 }}>
+            <button
+              className="btn-secondary"
+              disabled={resubmit.isPending}
+              onClick={() => resubmit.mutate(unresolved.version)}
+            >
+              {resubmit.isPending ? "Resubmitting…" : `Resubmit v${unresolved.version}`}
+            </button>
+          </div>
+        </div>
+      )}
+
       {pending && (
         <div className="notice notice-pending">
           <strong>Policy v{pending.version} is awaiting approval.</strong> It widens access, so it
           will only take effect once approvers sign off. The active policy below stays in force
-          until then.
+          until then. Narrowing changes still apply immediately; if one is made meanwhile, this
+          version will not be applied on approval (it ends <em>stale</em> and can be resubmitted).
           {pending.awe_request_id && (
             <>
               {" "}
@@ -293,12 +325,37 @@ function PolicySection({ partnerId }: { partnerId: string }) {
         )}
       </div>
 
-      {list.length > 0 && <VersionHistory versions={list} />}
+      {list.length > 0 && (
+        <VersionHistory
+          versions={list}
+          canResubmit={!pending && !resubmit.isPending}
+          onResubmit={(v) => resubmit.mutate(v)}
+        />
+      )}
     </div>
   );
 }
 
-function VersionHistory({ versions }: { versions: PartnerPolicy[] }) {
+function unresolvedLabel(status: string): string {
+  switch (status) {
+    case "failed":
+      return "not submitted for approval";
+    case "stale":
+      return "approved but not applied";
+    default:
+      return "rejected";
+  }
+}
+
+function VersionHistory({
+  versions,
+  canResubmit,
+  onResubmit,
+}: {
+  versions: PartnerPolicy[];
+  canResubmit: boolean;
+  onResubmit: (version: number) => void;
+}) {
   return (
     <div className="card">
       <h3 className="card-title">Version history</h3>
@@ -309,6 +366,7 @@ function VersionHistory({ versions }: { versions: PartnerPolicy[] }) {
             <th>Status</th>
             <th>Scopes</th>
             <th>Effective from</th>
+            <th />
           </tr>
         </thead>
         <tbody>
@@ -322,10 +380,27 @@ function VersionHistory({ versions }: { versions: PartnerPolicy[] }) {
                     needs fixing
                   </span>
                 )}
+                {v.status_reason && (
+                  <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                    {v.status_reason}
+                  </div>
+                )}
               </td>
               <td className="muted">{v.allowed_data_scopes.length} scope(s)</td>
               <td className="muted">
                 {v.effective_from ? new Date(v.effective_from).toLocaleString() : "—"}
+              </td>
+              <td>
+                {RESUBMITTABLE.includes(v.status) && (
+                  <button
+                    className="btn-secondary"
+                    disabled={!canResubmit}
+                    title={canResubmit ? "Save this version again as a new version" : "Another version is awaiting approval"}
+                    onClick={() => onResubmit(v.version)}
+                  >
+                    Resubmit
+                  </button>
+                )}
               </td>
             </tr>
           ))}

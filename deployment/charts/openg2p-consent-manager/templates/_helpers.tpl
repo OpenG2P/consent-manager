@@ -68,3 +68,27 @@ is bundled in the sanity image (TEST only); PM stores the derived public half.
       key: client_secret
       optional: true
 {{- end -}}
+
+{{/*
+URL AWE posts policy-change decisions to (root context). global.aweCallbackUrl
+if set; else the STAFF api's in-cluster Service — named exactly as
+templates/api/service.yaml names it, so it follows consentManagerApi.nameOverride
+(e.g. `cm-api` under commons-services).
+*/}}
+{{- define "consentManager.aweCallbackUrl" -}}
+{{- if .Values.global.aweCallbackUrl -}}
+{{- tpl .Values.global.aweCallbackUrl . -}}
+{{- else -}}
+{{- $staff := dict "Values" (merge (deepCopy .Values.consentManagerApi) (dict "global" .Values.global)) "Chart" .Chart "Release" .Release -}}
+{{- $port := int (default 80 .Values.consentManagerApi.service.port) -}}
+http://{{ include "common.names.fullname" $staff }}{{ if ne $port 80 }}:{{ $port }}{{ end }}/consent/v1/awe/webhooks/decision
+{{- end -}}
+{{- end -}}
+
+{{/*
+Whether a hook-annotations map still marks a Helm hook (an umbrella chart may
+null the keys out to run the resource as a plain one). Returns "true" or "".
+*/}}
+{{- define "consentManager.isHook" -}}
+{{- if and . (index . "helm.sh/hook") -}}true{{- end -}}
+{{- end -}}

@@ -145,6 +145,36 @@ class Initializer(BaseInitializer):
                         "ON partner_policies (awe_request_id)"
                     )
                 )
+                # Approval state machine: the version an approval is checked
+                # against, why a version ended failed/stale/rejected, and at most
+                # one pending version per binding (older duplicates → stale).
+                await conn.execute(
+                    text(
+                        "ALTER TABLE partner_policies ADD COLUMN IF NOT EXISTS "
+                        "base_version INTEGER"
+                    )
+                )
+                await conn.execute(
+                    text(
+                        "ALTER TABLE partner_policies ADD COLUMN IF NOT EXISTS "
+                        "status_reason TEXT"
+                    )
+                )
+                await conn.execute(
+                    text(
+                        "UPDATE partner_policies p SET status = 'stale', status_reason = "
+                        "'Superseded by a newer pending version (one pending per binding)' "
+                        "WHERE p.status = 'pending' AND EXISTS (SELECT 1 FROM "
+                        "partner_policies q WHERE q.partner_id = p.partner_id AND "
+                        "q.status = 'pending' AND q.version > p.version)"
+                    )
+                )
+                await conn.execute(
+                    text(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS uq_partner_policy_one_pending "
+                        "ON partner_policies (partner_id) WHERE status = 'pending'"
+                    )
+                )
 
                 # ── Single consent, one grant per registry (G2P-5719) ────────
                 # A partner (audience) may now be bound to several controllers,

@@ -10,7 +10,8 @@ import type { AweTask } from "../api/types";
 export default function ApprovalsPage() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["awe-tasks"],
-    queryFn: () => api.listMyTasks({ status: "open" }),
+    // Open and claimed tasks: a claimed task still awaits this approver.
+    queryFn: () => api.listMyTasks({ status: "actionable" }),
   });
 
   const tasks = data?.items ?? [];

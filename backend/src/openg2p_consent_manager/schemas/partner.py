@@ -196,8 +196,12 @@ class PolicyResponse(PolicyFields):
     id: str
     partner_id: str
     version: int
-    status: str  # pending | active | superseded | rejected
+    status: str  # pending | active | superseded | rejected | failed | stale
     awe_request_id: Optional[str] = None
+    # Version active when this one was created (0 = none); see PolicyStatus.stale.
+    base_version: Optional[int] = None
+    # Why the version ended failed / stale / rejected.
+    status_reason: Optional[str] = None
     effective_from: Optional[datetime] = None
 
     @computed_field

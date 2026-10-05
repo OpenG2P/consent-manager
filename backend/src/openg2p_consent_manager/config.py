@@ -143,6 +143,11 @@ class Settings(BaseSettings):
     # When awe_enabled is false (default), a widening policy activates immediately
     # (no approval gate) — legacy behaviour.
     awe_enabled: bool = False
+    # Whether the FIRST policy of a new binding (a grant from nothing) needs
+    # approval. On by default: with AWE on, a new binding denies everything until
+    # its first policy is approved. Set false to let the first policy go active
+    # immediately and gate only later widenings.
+    awe_gate_first_policy: bool = True
     # Base URL of the environment's AWE, reachable from CM pods (e.g.
     # https://awe.<baseDomain>). No trailing slash needed.
     awe_base_url: str = ""
@@ -151,9 +156,15 @@ class Settings(BaseSettings):
     # policy changes. Registered in AWE out-of-band. NB: distinct from CM's own
     # data-share policy — this is the *approval* policy key.
     awe_policy_change_policy_key: str = "consent-manager.policy_change.v1"
-    # CM→AWE service auth: Keycloak client-credentials. The fetched bearer is
-    # sent on POST /v1/awe/requests. If awe_static_token is set it is used
-    # verbatim instead (dev/testing).
+    # CM→AWE auth for POST /v1/awe/requests. By default CM forwards the acting
+    # admin's own bearer (as the registry does): it carries the issuer users log
+    # in with, which is the one AWE trusts, and makes the admin the requester.
+    # Without a caller bearer (auth disabled, automation without a token) CM
+    # falls back to a service token: awe_static_token if set, else a Keycloak
+    # client-credentials grant from awe_token_url. That token's `iss` must be an
+    # issuer AWE accepts — use the EXTERNAL Keycloak URL when AWE validates the
+    # external issuer (the commons default).
+    awe_forward_caller_token: bool = True
     awe_token_url: str = ""  # Keycloak token endpoint
     awe_client_id: str = ""
     awe_client_secret: str = ""
@@ -163,8 +174,12 @@ class Settings(BaseSettings):
     # HMAC on inbound webhooks. `callback_secret_id` is passed on every request.
     awe_callback_secret_id: str = ""
     awe_callback_hmac_secret: str = ""
-    # Public URL AWE should POST terminal webhooks back to. Must resolve to
-    # CM's /consent/v1/awe/webhooks/decision endpoint.
+    # URL AWE should POST terminal webhooks back to, reachable FROM the AWE pod
+    # (in-cluster: http://<staff-api-service>/consent/v1/awe/webhooks/decision).
+    # Must resolve to the STAFF api, which serves the webhook route.
     awe_callback_url: str = ""
     # Reject webhooks whose signed timestamp is more than this far from now.
     awe_webhook_max_skew_sec: int = 300
+    # The approver inbox lists open AND claimed tasks. AWE filters on one status
+    # per call, so CM fetches up to this many of each and merges them.
+    awe_inbox_fetch_limit: int = 100

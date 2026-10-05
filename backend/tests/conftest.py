@@ -183,10 +183,13 @@ def call(env):
 
     transport = httpx.ASGITransport(app=env["app"])
 
-    def _call(method, path, json=None, params=None):
+    def _call(method, path, json=None, params=None, headers=None, content=None):
         async def go():
             async with httpx.AsyncClient(transport=transport, base_url="http://cm") as c:
-                r = await c.request(method, path, json=json, params=params)
+                r = await c.request(
+                    method, path, json=json, params=params, headers=headers,
+                    content=content,
+                )
                 try:
                     body = r.json()
                 except ValueError:

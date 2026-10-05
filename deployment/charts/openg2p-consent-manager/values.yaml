@@ -21,6 +21,11 @@ global:
   keycloakBaseUrl: 'https://keycloak.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
   keycloakRealm: staff
   keycloakIssuerUrl: '{{ tpl .Values.global.keycloakBaseUrl $ }}/realms/{{ tpl .Values.global.keycloakRealm $ }}'
+  # The issuer users' tokens carry (public Keycloak URL). Empty => same as
+  # keycloakIssuerUrl. Umbrella charts that point keycloakIssuerUrl at the
+  # INTERNAL Keycloak (commons) also define this as the external one; the CM→AWE
+  # service-token fallback is fetched from it so its `iss` matches what AWE trusts.
+  keycloakExternalIssuerUrl: ''
   consentManagerAuthEnabled: true
   consentManagerAuthClientId: consent-manager
   consentManagerAdminRole: CONSENT_MANAGER_ADMIN
@@ -49,12 +54,14 @@ global:
   # OPTIONAL add-on (OFF by default). When ON, CM gates policy WIDENING behind the
   # shared AWE: a widening creates a `pending` policy version that only activates
   # once approvers sign off. CM is fully usable with this OFF — policy changes just
-  # take effect immediately (still admin-only). Turning it ON requires AWE-side
-  # setup that is NOT auto-provisioned: (1) an AWE approval POLICY registered for
-  # `awePolicyChangePolicyKey` (create + activate via AWE admin — see the
-  # approval-workflow-integration doc), (2) approver users/roles, (3) the
-  # consent-manager client trusted by AWE's issuer. CM auto-handles only the
-  # callback secret (awe-callback-seed Job) + the callback URL.
+  # take effect immediately (still admin-only).
+  #
+  # Turning it ON (aweEnabled: true) is all that is needed against the commons
+  # AWE: the awe-callback-seed Job registers CM's callback secret AND seeds the
+  # approval policy `awePolicyChangePolicyKey` (one stage, approvers = users
+  # holding the consent-manager client role CONSENT_MANAGER_APPROVER) into the
+  # shared AWE database; the callback URL and token URL are derived below. Grant
+  # CONSENT_MANAGER_APPROVER to the approver users (keycloak-init users[]).
   aweEnabled: false
   aweHostname: 'awe.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
   aweBaseUrl: 'https://{{ tpl .Values.global.aweHostname $ }}'
@@ -62,6 +69,38 @@ global:
   # AWE *approval* policy (workflow) key governing data-share policy changes.
   awePolicyChangePolicyKey: consent-manager.policy_change.v1
   aweWebhookMaxSkewSeconds: 300
+  # Gate the FIRST policy of a new binding too (a grant from nothing). With AWE
+  # on, a new binding then denies everything until an approver signs off.
+  aweGateFirstPolicy: true
+  # Forward the acting admin's own bearer to AWE when creating a request (as the
+  # registry does). Off => always use the service token below.
+  aweForwardCallerToken: true
+  # Service-token fallback (no caller bearer): Keycloak token endpoint for the
+  # consent-manager client. Empty => <keycloakExternalIssuerUrl or
+  # keycloakIssuerUrl>/protocol/openid-connect/token.
+  aweTokenUrl: ''
+  # Where AWE POSTs decisions (must reach the STAFF api from the AWE pod).
+  # Empty => http://<staff api service>/consent/v1/awe/webhooks/decision, the
+  # service name derived from consentManagerApi.nameOverride (so it follows a
+  # rename such as commons' `cm-api`).
+  aweCallbackUrl: ''
+  # The AWE approval policy the seed Job creates (if absent) for
+  # awePolicyChangePolicyKey. Existing rows are never overwritten — edits made
+  # in the AWE admin UI survive upgrades. seed: false => manage it in AWE only.
+  aweApprovalPolicy:
+    seed: true
+    name: Consent Manager data-share policy change
+    # all | any-n (modeValue approvals) | quorum | percentage (modeValue %)
+    mode: any-n
+    modeValue: 1
+    slaHours: ''
+    # Approvers: users holding this role. Client role on approverClient, or a
+    # realm role when approverClient is empty.
+    approverRole: '{{ tpl .Values.global.consentManagerApproverRole $ }}'
+    approverClient: '{{ tpl .Values.global.consentManagerAuthClientId $ }}'
+    # Set true in production so the admin who made a change cannot approve it.
+    # Off by default because the first-install `admin` holds both roles.
+    forbidSelfApproval: false
   # Per-caller callback secret: a unique id + a minted HMAC secret. The
   # awe-callback-seed Job inserts the row into AWE's callback_secret table; CM
   # holds the same raw secret to verify inbound webhook signatures.
@@ -77,6 +116,11 @@ global:
   # Helm release hosting the shared AWE — its Service is <aweReleaseName>-awe.
   aweReleaseName: commons-services
 
+  # How long the partner api may serve a policy from its pod-local cache after
+  # it changed (an approval is applied by the staff api; other pods pick it up
+  # within this many seconds).
+  partnerPolicyCacheTtlSeconds: 60
+
   # The data controller / module is a per-partner attribute set at onboarding —
   # one shared CM serves many modules, so there is no global controller setting.
 
@@ -86,6 +130,25 @@ global:
   # it is NOT read from the .p12. Set your own when using your own key, and
   # change it on every key rotation so old/new public keys coexist in the JWKS.
   consentSigningKid: cm-2025-01
+
+# ── AWE seed Job + callback HMAC Secret (rendered only when global.aweEnabled) ──
+# The Job registers CM's callback secret and seeds the approval policy into the
+# shared AWE database (see global.aweApprovalPolicy). Both run as Helm hooks by
+# default. Where hooks do not run (commons-services, installed via Rancher),
+# null the hook keys (`"helm.sh/hook": null`, ...): the Secret is then a plain
+# resource and the Job a plain Job named per release revision (so an upgrade
+# never patches an immutable Job), removed ttlSecondsAfterFinished after it ends.
+aweSeed:
+  image: jbergknoff/postgresql-client:latest
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 6
+aweCallbackHmacSecret:
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
 
 postgres-init:
   enabled: true
@@ -408,12 +471,16 @@ consentManagerApi:
     CONSENT_MANAGER_AWE_HTTP_TIMEOUT_SECONDS: '{{ .Values.global.aweHttpTimeoutSeconds }}'
     CONSENT_MANAGER_AWE_POLICY_CHANGE_POLICY_KEY: '{{ tpl .Values.global.awePolicyChangePolicyKey $ }}'
     CONSENT_MANAGER_AWE_WEBHOOK_MAX_SKEW_SEC: '{{ .Values.global.aweWebhookMaxSkewSeconds }}'
-    # AWE posts terminal webhooks here (in-cluster; no ingress hop needed).
-    CONSENT_MANAGER_AWE_CALLBACK_URL: 'http://{{ .Release.Name }}-api/consent/v1/awe/webhooks/decision'
+    CONSENT_MANAGER_AWE_GATE_FIRST_POLICY: '{{ .Values.global.aweGateFirstPolicy }}'
+    CONSENT_MANAGER_AWE_FORWARD_CALLER_TOKEN: '{{ .Values.global.aweForwardCallerToken }}'
+    # (CONSENT_MANAGER_AWE_CALLBACK_URL is set per deployment from the staff api
+    #  service name — see consentManager.aweCallbackUrl in _helpers.tpl.)
     CONSENT_MANAGER_AWE_CALLBACK_SECRET_ID: '{{ tpl .Values.global.aweCallbackSecretId $ }}'
-    # CM→AWE service token via the consent-manager client (client-credentials).
-    CONSENT_MANAGER_AWE_TOKEN_URL: '{{ tpl .Values.global.keycloakIssuerUrl $ }}/protocol/openid-connect/token'
+    # CM→AWE service-token fallback via the consent-manager client
+    # (client-credentials), from the issuer AWE trusts (external by default).
+    CONSENT_MANAGER_AWE_TOKEN_URL: '{{ tpl (.Values.global.aweTokenUrl | default (printf "%s/protocol/openid-connect/token" (.Values.global.keycloakExternalIssuerUrl | default .Values.global.keycloakIssuerUrl))) $ }}'
     CONSENT_MANAGER_AWE_CLIENT_ID: '{{ tpl .Values.global.consentManagerAuthClientId $ }}'
+    CONSENT_MANAGER_PARTNER_CACHE_TTL_SEC: '{{ .Values.global.partnerPolicyCacheTtlSeconds }}'
     # In demo mode, force a distinctive kid so any receipt / JWKS makes it obvious
     # a demo (insecure) key is in use; otherwise use the configured kid.
     CONSENT_MANAGER_CM_SIGNING_KID: '{{ if eq .Values.signingKey.mode "demo" }}cm-demo-INSECURE{{ else }}{{ tpl .Values.global.consentSigningKid $ }}{{ end }}'

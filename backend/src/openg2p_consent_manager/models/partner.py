@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import DateTime, Integer, String, UniqueConstraint
+from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -17,11 +17,20 @@ class PartnerStatus(str, Enum):
 class PolicyStatus(str, Enum):
     # A versioned data-share policy's lifecycle. When AWE approval is enabled, a
     # widening policy is created `pending` and only becomes `active` once AWE
-    # approves it (superseding the prior active version); `rejected` if declined.
+    # approves it (superseding the prior active version); `rejected` if declined
+    # or cancelled. At most one version per binding is `pending`.
+    #   failed — the submission to AWE failed; it never reached approvers.
+    #   stale  — approved, but the active version changed after this one was
+    #            created (e.g. a narrowing went live meanwhile), so it was NOT
+    #            applied. Resubmit to have it re-evaluated against the current one.
+    # failed / stale / rejected versions can be resubmitted (copied into a new
+    # version, see POST .../policies/{version}/resubmit).
     pending = "pending"
     active = "active"
     superseded = "superseded"
     rejected = "rejected"
+    failed = "failed"
+    stale = "stale"
 
 
 class FetchType(str, Enum):
@@ -93,6 +102,12 @@ class PartnerPolicy(BaseORMModelWithId):
     awe_request_id: Mapped[Optional[str]] = mapped_column(
         String(64), nullable=True, index=True
     )
+    # Version that was active when this one was created (0 = none). An approval
+    # applies only if that is still the active version; otherwise → `stale`.
+    # NULL on rows created before this column existed (check skipped).
+    base_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Why a version ended failed / stale / rejected (shown in the UI).
+    status_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     effective_from: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
