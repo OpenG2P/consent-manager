@@ -14,6 +14,33 @@ Render the env: list from .Values.envVars (literal/templated) and
 .Values.envVarsFrom (valueFrom blocks). Inner Helm templates are resolved
 against the root context ($).
 */}}
+{{/*
+Agri Stack exchange env — rendered only when its settings are set, so a
+standalone install's manifests are unchanged. Call with the root context.
+*/}}
+{{- define "consentManager.exchangeEnv" -}}
+{{- $x := .Values.global.agriStackExchange | default dict -}}
+{{- $presenters := $x.receiptPresenters | default list -}}
+{{- if kindIs "string" $presenters }}{{ $presenters = compact (splitList "," (nospace $presenters)) }}{{ end -}}
+{{- $issuers := list -}}
+{{- range ($x.trustedReceiptIssuers | default list) }}{{ $issuers = append $issuers . }}{{ end -}}
+{{- with $x.trustedIssuer }}{{ if .issuer }}{{ $issuers = append $issuers (dict "issuer" .issuer "jwks_url" .jwksUrl "presenter" (.presenter | default "")) }}{{ end }}{{ end -}}
+{{- if and $x.issuer $presenters }}
+- name: CONSENT_MANAGER_RECEIPT_ISSUER
+  value: {{ tpl $x.issuer . | quote }}
+- name: CONSENT_MANAGER_RECEIPT_PRESENTERS
+  value: {{ toJson $presenters | quote }}
+- name: CONSENT_MANAGER_RECEIPT_TTL_SECONDS
+  value: {{ $x.receiptTtlSeconds | default 900 | quote }}
+{{- end }}
+{{- if $issuers }}
+- name: CONSENT_MANAGER_TRUSTED_RECEIPT_ISSUERS
+  value: {{ toJson $issuers | quote }}
+- name: CONSENT_MANAGER_RECEIPT_STATUS_CHECK
+  value: {{ $x.receiptStatusCheck | default "always" | quote }}
+{{- end }}
+{{- end -}}
+
 {{- define "consentManagerApi.envVars" -}}
 {{- range $key, $value := .Values.envVars }}
 - name: {{ $key }}

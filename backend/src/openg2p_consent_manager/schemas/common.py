@@ -23,6 +23,18 @@ class ReasonCode(str, Enum):
     controller_not_granted = "controller_not_granted"
     # request_context.subject_id has the consent subject's type but another value.
     subject_mismatch = "subject_mismatch"
+    # ── Agri Stack exchange (only when its settings are configured) ──
+    # issue_receipts requested by a caller that is not a configured presenter
+    # (or receipt issuing is not configured on this CM).
+    receipt_presenter_not_allowed = "receipt_presenter_not_allowed"
+    # A consent receipt from an issuer this CM does not trust (or none trusted).
+    receipt_issuer_not_trusted = "receipt_issuer_not_trusted"
+    # A trusted issuer's receipt that failed verification (signature, typ, claims).
+    receipt_invalid = "receipt_invalid"
+    # The receipt names another presenter than the caller.
+    presenter_mismatch = "presenter_mismatch"
+    # The receipt's status could not be checked at its issuer (fail closed).
+    receipt_status_unavailable = "receipt_status_unavailable"
 
 
 class SubjectId(BaseModel):
@@ -53,4 +65,10 @@ class StatusResponse(BaseModel):
     consent_id: str
     status: str
     valid_until: Optional[datetime] = None
+    checked_at: datetime
+
+
+class ReceiptStatusResponse(BaseModel):
+    jti: str
+    status: str  # active | revoked | expired
     checked_at: datetime

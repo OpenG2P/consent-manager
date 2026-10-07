@@ -19,6 +19,7 @@ from ..models import (
 from ..schemas.common import ReasonCode
 from ..schemas.verification import ConsentObject, Decision, ValidateRequest
 from ..utils.canonical import b64url_decode, sha256_hex
+from .exchange_service import RECEIPT_TYP, ExchangeService, to_datetime
 from .partner_service import PartnerService
 from .policy_service import PolicyService
 from .receipt_service import ReceiptService
@@ -42,6 +43,7 @@ class VerificationService(BaseService):
         self.crypto_helper = build_crypto_helper(backend=_config.crypto_backend)
         self.policy = PolicyService.get_component()
         self.receipts = ReceiptService.get_component()
+        self.exchange = ExchangeService.get_component()
 
     @staticmethod
     def _decode_jws(jws: str) -> tuple[dict, dict]:
@@ -56,6 +58,8 @@ class VerificationService(BaseService):
         return claims, protected_header
 
     async def validate(self, parsed: ValidateRequest) -> Decision:
+        if parsed.issue_receipts:
+            return await self._validate_and_issue(parsed)
         now = datetime.now(timezone.utc)
         jws = parsed.consent_jws
         # The JWS string is itself canonical/immutable, so hash it directly.
@@ -66,6 +70,16 @@ class VerificationService(BaseService):
         # before any permit is issued.
         try:
             claims, jws_header = self._decode_jws(jws)
+        except Exception as exc:
+            _logger.info("Malformed consent JWS: %s", exc)
+            return await self._deny(
+                ReasonCode.malformed_object, "consent JWS could not be decoded",
+                now, ctx_hash,
+            )
+        # An exchange CM's consent receipt (department role).
+        if isinstance(jws_header, dict) and jws_header.get("typ") == RECEIPT_TYP:
+            return await self._validate_receipt(parsed, claims, jws_header, now, ctx_hash)
+        try:
             obj = ConsentObject(**claims)
         except Exception as exc:
             _logger.info("Malformed consent JWS: %s", exc)
@@ -208,6 +222,234 @@ class VerificationService(BaseService):
             obj, grant, partner, result, now, ctx_hash
         )
 
+    # ── Agri Stack exchange: issuing receipts (exchange role) ───────────────
+
+    async def _validate_and_issue(self, parsed: ValidateRequest) -> Decision:
+        """``issue_receipts``: validate the partner's consent for each granted
+        controller (or just ``data_controller``) exactly as a registry's call
+        would — same checks, artefacts and decision log — and, if every one is a
+        permit, sign one receipt per controller for the caller to present."""
+        now = datetime.now(timezone.utc)
+        ctx_hash = sha256_hex(parsed.consent_jws.encode("utf-8"))
+        presenter = parsed.partner_id
+        refusal = self.exchange.issuing_refusal(presenter)
+        if refusal:
+            return await self._deny(
+                ReasonCode.receipt_presenter_not_allowed, refusal, now, ctx_hash,
+                data_controller=parsed.data_controller,
+            )
+        try:
+            claims, jws_header = self._decode_jws(parsed.consent_jws)
+            if isinstance(jws_header, dict) and jws_header.get("typ") == RECEIPT_TYP:
+                raise ValueError("receipts are issued from a partner consent, not a receipt")
+            obj = ConsentObject(**claims)
+        except Exception as exc:
+            _logger.info("Malformed consent JWS for issue_receipts: %s", exc)
+            return await self._deny(
+                ReasonCode.malformed_object, "consent JWS could not be decoded",
+                now, ctx_hash,
+            )
+        if parsed.data_controller:
+            controllers = [parsed.data_controller]
+        elif obj.has_grants:
+            controllers = [g.data_controller for g in obj.grants]
+        else:
+            controllers = [obj.data_controller]
+
+        decisions: dict[str, Decision] = {}
+        for controller in controllers:
+            decision = await self.validate(
+                parsed.model_copy(update={"data_controller": controller, "issue_receipts": False})
+            )
+            if decision.decision != "permit":
+                return decision
+            decisions[controller] = decision
+
+        receipts = {
+            controller: await self.exchange.issue(obj, decision, presenter, now)
+            for controller, decision in decisions.items()
+        }
+        if len(decisions) == 1:
+            return next(iter(decisions.values())).model_copy(update={"receipts": receipts})
+        first = next(iter(decisions.values()))
+        return Decision(
+            decision="permit", reason_code=ReasonCode.ok,
+            subject_id=first.subject_id,
+            valid_until=min(_aware(d.valid_until) for d in decisions.values()),
+            evaluated_at=now, receipts=receipts,
+        )
+
+    # ── Agri Stack exchange: accepting receipts (department role) ───────────
+
+    async def _validate_receipt(
+        self, parsed: ValidateRequest, claims, header: dict, now, ctx_hash
+    ) -> Decision:
+        """A consent receipt from an exchange CM: verify it against a trusted
+        issuer's JWKS, check audience/presenter/time (and its status at the
+        issuer), then apply THIS CM's standing policy for the presenter at the
+        calling controller. Effective scopes = receipt scopes ∩ policy."""
+        claims = claims if isinstance(claims, dict) else {}
+        iss = claims.get("iss")
+        jti = claims.get("jti") if isinstance(claims.get("jti"), str) else None
+        controller = parsed.data_controller
+        log = {"jti": jti, "data_controller": controller,
+               "receipt_jti": jti, "receipt_issuer": iss if isinstance(iss, str) else None}
+
+        if not _config.trusted_receipt_issuers:
+            return await self._deny(
+                ReasonCode.receipt_issuer_not_trusted,
+                "consent receipts are not accepted: no trusted receipt issuers configured",
+                now, ctx_hash, **log,
+            )
+        trusted = self.exchange.trusted_issuer(iss)
+        if trusted is None:
+            return await self._deny(
+                ReasonCode.receipt_issuer_not_trusted,
+                f"receipt issuer '{iss}' is not trusted", now, ctx_hash, **log,
+            )
+
+        # 1. Signature against the issuer's JWKS (refetched on an unknown kid).
+        key = await self.exchange.issuer_key(trusted, header.get("kid"))
+        if key is None:
+            return await self._deny(
+                ReasonCode.receipt_invalid,
+                "no key for the receipt's kid in the issuer's JWKS", now, ctx_hash, **log,
+            )
+        pem, alg = key
+        if header.get("alg") != alg:
+            return await self._deny(
+                ReasonCode.receipt_invalid, "receipt alg does not match the issuer key",
+                now, ctx_hash, **log,
+            )
+        try:
+            from jwt.api_jws import PyJWS
+
+            PyJWS().decode(parsed.consent_jws, pem, algorithms=[alg])
+        except Exception as exc:
+            _logger.info("Receipt signature did not verify: %s", exc)
+            return await self._deny(
+                ReasonCode.receipt_invalid, "receipt signature did not verify",
+                now, ctx_hash, **log,
+            )
+
+        # Claims (now verified).
+        sub = claims.get("sub")
+        scopes = claims.get("scopes")
+        presenter = claims.get("presenter")
+        exp = to_datetime(claims.get("exp"))
+        nbf = to_datetime(claims.get("nbf")) or to_datetime(claims.get("iat"))
+        consent_issued_at = to_datetime(claims.get("consent_issued_at")) or nbf
+        consent_exp = to_datetime(claims.get("consent_exp")) or exp
+        if not (
+            jti and isinstance(sub, dict) and sub.get("type") and sub.get("value")
+            and isinstance(scopes, list) and isinstance(presenter, str) and presenter
+            and exp and nbf and consent_issued_at and consent_exp
+        ):
+            return await self._deny(
+                ReasonCode.receipt_invalid, "receipt is missing required claims",
+                now, ctx_hash, **log,
+            )
+
+        # 2. Audience = this controller; presenter = the caller; time window.
+        if not controller:
+            return await self._deny(
+                ReasonCode.malformed_object,
+                "data_controller is required for a consent receipt", now, ctx_hash, **log,
+            )
+        if claims.get("aud") != controller:
+            return await self._deny(
+                ReasonCode.audience_mismatch,
+                f"receipt is for '{claims.get('aud')}', not '{controller}'",
+                now, ctx_hash, **log,
+            )
+        if (trusted.presenter and presenter != trusted.presenter) or presenter != parsed.partner_id:
+            return await self._deny(
+                ReasonCode.presenter_mismatch,
+                f"receipt presenter '{presenter}' is not the caller "
+                f"'{parsed.partner_id}'", now, ctx_hash, **log,
+            )
+        leeway = timedelta(seconds=30)
+        if now + leeway < nbf:
+            return await self._deny(
+                ReasonCode.expired, "receipt not yet valid", now, ctx_hash, **log,
+            )
+        if now >= exp:
+            return await self._deny(
+                ReasonCode.expired, "receipt expired", now, ctx_hash, **log,
+            )
+        ctx_subject = parsed.request_context.subject_id if parsed.request_context else None
+        if self._subject_mismatch(ctx_subject, sub["type"], sub["value"]):
+            return await self._deny(
+                ReasonCode.subject_mismatch,
+                "request_context.subject_id does not match the receipt subject",
+                now, ctx_hash, **log,
+            )
+
+        # 3. Status at the issuer (revoked consent → revoked receipt).
+        if (_config.receipt_status_check or "always").lower() != "never":
+            status = await self.exchange.remote_status(trusted, jti)
+            if status is None:
+                return await self._deny(
+                    ReasonCode.receipt_status_unavailable,
+                    "receipt status could not be checked at the issuer", now, ctx_hash, **log,
+                )
+            if status != "active":
+                reason = {"revoked": ReasonCode.revoked, "expired": ReasonCode.expired}.get(
+                    status, ReasonCode.receipt_invalid
+                )
+                return await self._deny(
+                    reason, f"receipt status at the issuer: {status}", now, ctx_hash, **log,
+                )
+
+        # 4. This CM's standing policy for the presenter at this controller.
+        material = await self.partners.get_verification_material(presenter, controller)
+        if material is None:
+            return await self._deny(
+                ReasonCode.unknown_partner,
+                f"presenter '{presenter}' not onboarded for data_controller "
+                f"'{controller}', or suspended", now, ctx_hash, **log,
+            )
+        partner = material["partner"]
+
+        # The same receipt presented again for this controller → stored decision.
+        existing = await self._existing_artefact(jti, controller)
+        if existing is not None:
+            if existing.partner_id != partner.id or existing.subject_id_value != sub["value"]:
+                return await self._deny(
+                    ReasonCode.replay, "receipt jti already used for a different consent",
+                    now, ctx_hash, partner_id=partner.id, **log,
+                )
+            return self._decision_from_artefact(existing, now)
+
+        try:
+            obj = ConsentObject(
+                jti=jti, subject_id=sub, aud=presenter,
+                purpose={"code": claims.get("purpose")},
+                data_controller=controller, data_scopes=[str(x) for x in scopes],
+                fetch_type="oneshot",
+                validity={"valid_from": consent_issued_at, "valid_until": consent_exp},
+                issued_at=consent_issued_at,
+            )
+        except Exception as exc:
+            _logger.info("Receipt claims do not form a consent: %s", exc)
+            return await self._deny(
+                ReasonCode.receipt_invalid, "receipt claims are malformed",
+                now, ctx_hash, partner_id=partner.id, **log,
+            )
+        grant = obj.grant_for(controller)
+        result = self.policy.evaluate(obj, material, parsed.request_context, grant=grant)
+        if not result.permit:
+            return await self._deny(
+                result.reason, result.detail, now, ctx_hash, partner_id=partner.id,
+                policy_version=result.policy_version, **log,
+            )
+        # 5. The normal decision; the artefact lives no longer than the receipt.
+        return await self._permit(
+            obj, grant, partner, result, now, ctx_hash,
+            source=ArtefactSource.receipt.value, valid_until=min(exp, consent_exp),
+            receipt_jti=jti, receipt_issuer=trusted.issuer,
+        )
+
     # ── helpers ──────────────────────────────────────────────────────────────
 
     async def list_decisions(
@@ -276,7 +518,12 @@ class VerificationService(BaseService):
             evaluated_at=now,
         )
 
-    async def _permit(self, obj, grant, partner, result, now, ctx_hash) -> Decision:
+    async def _permit(
+        self, obj, grant, partner, result, now, ctx_hash,
+        source: str = ArtefactSource.embedded.value,
+        valid_until: Optional[datetime] = None,
+        receipt_jti: Optional[str] = None, receipt_issuer: Optional[str] = None,
+    ) -> Decision:
         from ..schemas.common import SubjectId
 
         artefact = ConsentArtefact(
@@ -289,8 +536,8 @@ class VerificationService(BaseService):
             effective_data_scopes=result.effective_scopes,
             fetch_type=obj.fetch_type,
             valid_from=_aware(obj.validity.valid_from),
-            valid_until=_aware(obj.validity.valid_until),
-            source=ArtefactSource.embedded.value,
+            valid_until=valid_until or _aware(obj.validity.valid_until),
+            source=source,
             policy_version=result.policy_version,
             object_jti=obj.jti,
             status=ArtefactStatus.active.value,
@@ -306,6 +553,7 @@ class VerificationService(BaseService):
                     data_controller=grant.data_controller,
                     decision="permit", reason_code=ReasonCode.ok.value,
                     policy_version=result.policy_version, request_ctx_hash=ctx_hash,
+                    receipt_jti=receipt_jti, receipt_issuer=receipt_issuer,
                 )
             )
             try:
@@ -335,6 +583,7 @@ class VerificationService(BaseService):
         self, reason: ReasonCode, detail: Optional[str], now, ctx_hash,
         partner_id: Optional[str] = None, jti: Optional[str] = None,
         policy_version: Optional[int] = None, data_controller: Optional[str] = None,
+        receipt_jti: Optional[str] = None, receipt_issuer: Optional[str] = None,
     ) -> Decision:
         async with async_session()() as session:
             session.add(
@@ -343,6 +592,7 @@ class VerificationService(BaseService):
                     decision="deny",
                     reason_code=reason.value, detail=detail,
                     policy_version=policy_version, request_ctx_hash=ctx_hash,
+                    receipt_jti=receipt_jti, receipt_issuer=receipt_issuer,
                 )
             )
             await session.commit()

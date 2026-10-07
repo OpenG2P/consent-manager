@@ -1,7 +1,20 @@
 from openg2p_fastapi_common.config import Settings as BaseSettings
+from pydantic import BaseModel
 from pydantic_settings import SettingsConfigDict
 
 from . import __version__
+
+
+class TrustedReceiptIssuer(BaseModel):
+    """An exchange Consent Manager whose consent receipts this CM accepts
+    (department role). ``presenter``, when set, is the only presenter accepted
+    on its receipts. ``status_url`` is a template with ``{jti}``; empty derives
+    it from ``jwks_url`` (``<base>/consent/v1/receipts/{jti}/status``)."""
+
+    issuer: str
+    jwks_url: str
+    presenter: str = ""
+    status_url: str = ""
 
 
 class Settings(BaseSettings):
@@ -183,3 +196,22 @@ class Settings(BaseSettings):
     # The approver inbox lists open AND claimed tasks. AWE filters on one status
     # per call, so CM fetches up to this many of each and merges them.
     awe_inbox_fetch_limit: int = 100
+
+    # ── Agri Stack exchange (G2P-5719) — all off by default ─────────────────
+    # Exchange role: issue signed consent receipts on /validate when the caller
+    # sends issue_receipts=true. Needs an issuer ID and the callers (their
+    # partner_id / sender_id) allowed to request and present receipts. Receipts
+    # are signed with the CM signing key above (same kid/alg, same JWKS).
+    receipt_issuer: str = ""  # e.g. agri-stack-exchange-cm
+    receipt_presenters: list[str] = []  # e.g. ["agri-composite"]
+    receipt_ttl_seconds: int = 900
+    # Department role: exchange CMs whose receipts /validate accepts. Empty →
+    # receipts are denied (receipt_issuer_not_trusted); nothing else changes.
+    trusted_receipt_issuers: list[TrustedReceiptIssuer] = []
+    # Check each receipt's status at its issuer: always | never.
+    receipt_status_check: str = "always"
+    receipt_status_cache_ttl_seconds: int = 10
+    receipt_jwks_cache_ttl_seconds: int = 300
+    # Minimum interval between JWKS refetches for one issuer on an unknown kid.
+    receipt_jwks_refresh_cooldown_seconds: int = 10
+    receipt_fetch_timeout_seconds: float = 3.0

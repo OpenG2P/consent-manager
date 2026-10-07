@@ -57,6 +57,9 @@ spec:
           {{- end }}
           env:
             {{- include "consentManagerApi.envVars" . | nindent 12 }}
+            {{- with (include "consentManager.exchangeEnv" $ | trim) }}
+            {{- . | nindent 12 }}
+            {{- end }}
             - name: CONSENT_MANAGER_API_AUDIENCE
               value: {{ .Values.apiAudience | quote }}
             - name: CONSENT_MANAGER_AUTH_ENABLED

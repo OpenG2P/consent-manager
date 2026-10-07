@@ -26,6 +26,7 @@ from .models import (
     ConsentReceipt,
     ConsentRequest,
     DecisionLog,
+    IssuedReceipt,
     Partner,
     PartnerPolicy,
     RevocationRecord,
@@ -35,6 +36,7 @@ from .services import (
     AweWebhookService,
     ConsentService,
     CryptoService,
+    ExchangeService,
     LifecycleService,
     PartnerService,
     PolicyService,
@@ -55,6 +57,7 @@ class Initializer(BaseInitializer):
         PartnerService()
         PolicyService()
         ReceiptService()
+        ExchangeService()  # depends on CryptoService
         VerificationService()
         ConsentService()
         LifecycleService()
@@ -101,6 +104,7 @@ class Initializer(BaseInitializer):
                 DecisionLog,
                 AuditLog,
                 AweProcessedEvent,
+                IssuedReceipt,
             ):
                 await model.create_migrate()
 
@@ -240,6 +244,15 @@ class Initializer(BaseInitializer):
                         "data_controller VARCHAR(255)"
                     )
                 )
+                # Agri Stack exchange: the consent receipt a decision was made
+                # on (department role). NULL for every other decision.
+                for column in ("receipt_jti", "receipt_issuer"):
+                    await conn.execute(
+                        text(
+                            "ALTER TABLE decision_logs ADD COLUMN IF NOT EXISTS "
+                            f"{column} VARCHAR(255)"
+                        )
+                    )
             _logger.info("Database migration complete")
 
         asyncio.run(migrate())

@@ -11,6 +11,7 @@ from .consent import (
     RequestStatus,
     RevocationRecord,
 )
+from .exchange import IssuedReceipt
 from .partner import (
     FetchType,
     Partner,
@@ -36,6 +37,7 @@ __all__ = [
     "ArtefactSource",
     "ConsentReceipt",
     "RevocationRecord",
+    "IssuedReceipt",
     "DecisionLog",
     "AuditLog",
 ]
