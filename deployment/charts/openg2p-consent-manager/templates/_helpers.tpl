@@ -41,6 +41,43 @@ standalone install's manifests are unchanged. Call with the root context.
 {{- end }}
 {{- end -}}
 
+{{/*
+Partner portal env for the STAFF api (it serves /consent/v1/partner-portal):
+the partner realm's issuer + JWKS (partnerPortal.enabled) and evidence storage
+(evidence.enabled or partnerPortal.enabled). Empty otherwise, so a standalone
+install's manifests are unchanged. Call with the root context.
+*/}}
+{{- define "consentManager.partnerPortalEnv" -}}
+{{- $p := .Values.partnerPortal | default dict -}}
+{{- $e := .Values.evidence | default dict -}}
+{{- if $p.enabled }}
+- name: CONSENT_MANAGER_PARTNER_AUTH_ISSUER
+  value: {{ tpl $p.keycloak.issuerUrl . | quote }}
+- name: CONSENT_MANAGER_PARTNER_AUTH_JWKS_URL
+  value: {{ tpl $p.keycloak.jwksUrl . | quote }}
+{{- end }}
+{{- if or $e.enabled $p.enabled }}
+- name: CONSENT_MANAGER_EVIDENCE_S3_ENDPOINT
+  value: {{ tpl $e.s3.endpoint . | quote }}
+- name: CONSENT_MANAGER_EVIDENCE_S3_BUCKET
+  value: {{ tpl $e.s3.bucket . | quote }}
+- name: CONSENT_MANAGER_EVIDENCE_S3_REGION
+  value: {{ tpl $e.s3.region . | quote }}
+- name: CONSENT_MANAGER_EVIDENCE_MAX_BYTES
+  value: {{ $e.maxBytes | int64 | toString | quote }}
+- name: CONSENT_MANAGER_EVIDENCE_S3_ACCESS_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ tpl $e.s3.existingSecret . | quote }}
+      key: {{ $e.s3.accessKeyKey | quote }}
+- name: CONSENT_MANAGER_EVIDENCE_S3_SECRET_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ tpl $e.s3.existingSecret . | quote }}
+      key: {{ $e.s3.secretKeyKey | quote }}
+{{- end }}
+{{- end -}}
+
 {{- define "consentManagerApi.envVars" -}}
 {{- range $key, $value := .Values.envVars }}
 - name: {{ $key }}

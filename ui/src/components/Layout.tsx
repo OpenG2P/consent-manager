@@ -25,6 +25,12 @@ export default function Layout() {
               Approvals
             </NavLink>
           )}
+          {/* Approvers act on assisted-consent verifications; admins may read. */}
+          {(approver || admin) && (
+            <NavLink to="/verifications" className={navClass}>
+              Consent verifications
+            </NavLink>
+          )}
           {admin && (
             <NavLink to="/decisions" className={navClass}>
               Decisions

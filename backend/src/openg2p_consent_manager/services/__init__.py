@@ -1,7 +1,9 @@
+from .assisted_service import AssistedConsentService, artefact_status
 from .awe_client import AweClient, AweClientError
 from .awe_webhook_service import AweWebhookService, WebhookError
 from .consent_service import ConsentService
 from .crypto_service import CryptoService
+from .evidence_service import EvidenceError, EvidenceService
 from .exchange_service import ExchangeService
 from .lifecycle_service import LifecycleError, LifecycleService
 from .partner_service import (
@@ -32,4 +34,8 @@ __all__ = [
     "ConsentService",
     "LifecycleService",
     "LifecycleError",
+    "EvidenceService",
+    "EvidenceError",
+    "AssistedConsentService",
+    "artefact_status",
 ]

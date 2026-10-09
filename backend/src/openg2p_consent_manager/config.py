@@ -215,3 +215,27 @@ class Settings(BaseSettings):
     # Minimum interval between JWKS refetches for one issuer on an unknown kid.
     receipt_jwks_refresh_cooldown_seconds: int = 10
     receipt_fetch_timeout_seconds: float = 3.0
+
+    # ── Partner portal: partner users (consent scenario 1) — off by default ──
+    # Partner users log in to the Keycloak `partner` realm (not the staff realm)
+    # and carry a `partner_id` claim (the partner's audience, e.g. bank-a).
+    # Empty issuer → the partner-portal API answers 404. Tokens are always
+    # signature-verified against the realm's JWKS (empty JWKS URL → derived
+    # from the issuer), independent of auth_enabled (which is for staff).
+    partner_auth_issuer: str = ""  # e.g. https://keycloak.../realms/partner
+    partner_auth_jwks_url: str = ""
+    partner_auth_audience: str = ""  # optional; empty disables the audience check
+    partner_auth_partner_claim: str = "partner_id"
+    # A partner user needs at least one of these realm/client roles.
+    partner_auth_roles: list[str] = ["PARTNER_OPERATOR", "PARTNER_ADMIN"]
+
+    # ── Consent evidence (signed forms) — S3-compatible object storage ──────
+    # Garage in OpenG2P commons. Empty endpoint → uploads/downloads answer 503.
+    evidence_s3_endpoint: str = ""  # e.g. http://commons-garage:3900
+    evidence_s3_access_key: str = ""
+    evidence_s3_secret_key: str = ""
+    evidence_s3_bucket: str = "consent-evidence"  # created if missing
+    evidence_s3_region: str = "garage"
+    evidence_max_bytes: int = 10 * 1024 * 1024
+    evidence_allowed_types: list[str] = ["application/pdf", "image/jpeg", "image/png"]
+    evidence_max_files_per_request: int = 20

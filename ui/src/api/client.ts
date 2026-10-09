@@ -17,7 +17,9 @@ import type {
   PartnerUpdate,
   PolicyMeta,
   PolicyUpsert,
+  OffsetPage,
   RevokeResponse,
+  VerificationRequest,
 } from "./types";
 
 export class ApiError extends Error {
@@ -54,6 +56,25 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw new ApiError(res.status, typeof detail === "string" ? detail : JSON.stringify(detail), reason);
   }
   return body as T;
+}
+
+// File download (evidence): the raw body as a Blob, with the bearer token.
+async function requestBlob(path: string): Promise<Blob> {
+  await refreshToken();
+  const base = getConfig().apiBaseUrl.replace(/\/$/, "");
+  const res = await fetch(`${base}${path}`, { headers: { Authorization: `Bearer ${getToken()}` } });
+  if (!res.ok) {
+    const text = await res.text();
+    let detail: string = res.statusText;
+    try {
+      const body = JSON.parse(text);
+      detail = body?.detail ?? body?.error ?? body?.message ?? detail;
+    } catch {
+      /* not JSON */
+    }
+    throw new ApiError(res.status, typeof detail === "string" ? detail : JSON.stringify(detail));
+  }
+  return res.blob();
 }
 
 const V1 = "/consent/v1";
@@ -151,5 +172,28 @@ export const api = {
     request<ConsentRequest>(`${V1}/consent-requests/${id}/deny`, {
       method: "POST",
       body: JSON.stringify({ reason: reason ?? null }),
+    }),
+
+  // ── Consent verifications (assisted consent; approver acts, admin reads) ──
+  listVerifications: (params: { status?: string; limit?: number; offset?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (params.status) q.set("status", params.status);
+    q.set("limit", String(params.limit ?? 50));
+    q.set("offset", String(params.offset ?? 0));
+    return request<OffsetPage<VerificationRequest>>(`${V1}/verifications?${q.toString()}`);
+  },
+  getVerification: (id: string) =>
+    request<VerificationRequest>(`${V1}/verifications/${encodeURIComponent(id)}`),
+  getVerificationEvidence: (id: string, evidenceId: string) =>
+    requestBlob(`${V1}/verifications/${encodeURIComponent(id)}/evidence/${encodeURIComponent(evidenceId)}`),
+  approveVerification: (id: string, note?: string) =>
+    request<VerificationRequest>(`${V1}/verifications/${encodeURIComponent(id)}/approve`, {
+      method: "POST",
+      body: JSON.stringify(note ? { note } : {}),
+    }),
+  rejectVerification: (id: string, note: string) =>
+    request<VerificationRequest>(`${V1}/verifications/${encodeURIComponent(id)}/reject`, {
+      method: "POST",
+      body: JSON.stringify({ note }),
     }),
 };

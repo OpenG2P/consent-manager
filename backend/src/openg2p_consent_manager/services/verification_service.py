@@ -1,6 +1,7 @@
 import json
 import logging
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Optional
 
 from openg2p_fastapi_common.service import BaseService
@@ -14,7 +15,9 @@ from ..models import (
     ArtefactSource,
     ArtefactStatus,
     ConsentArtefact,
+    ConsentReceipt,
     DecisionLog,
+    Partner,
 )
 from ..schemas.common import ReasonCode
 from ..schemas.verification import ConsentObject, Decision, ValidateRequest
@@ -58,6 +61,8 @@ class VerificationService(BaseService):
         return claims, protected_header
 
     async def validate(self, parsed: ValidateRequest) -> Decision:
+        if parsed.consent_id:
+            return await self._validate_stored(parsed)
         if parsed.issue_receipts:
             return await self._validate_and_issue(parsed)
         now = datetime.now(timezone.utc)
@@ -269,15 +274,184 @@ class VerificationService(BaseService):
             controller: await self.exchange.issue(obj, decision, presenter, now)
             for controller, decision in decisions.items()
         }
+        grants = {c: list(d.effective_data_scopes or []) for c, d in decisions.items()}
         if len(decisions) == 1:
-            return next(iter(decisions.values())).model_copy(update={"receipts": receipts})
+            return next(iter(decisions.values())).model_copy(
+                update={"receipts": receipts, "grants": grants}
+            )
         first = next(iter(decisions.values()))
         return Decision(
             decision="permit", reason_code=ReasonCode.ok,
             subject_id=first.subject_id,
             valid_until=min(_aware(d.valid_until) for d in decisions.values()),
-            evaluated_at=now, receipts=receipts,
+            evaluated_at=now, receipts=receipts, grants=grants,
         )
+
+    # ── A stored (originated) consent presented by its ID ───────────────────
+
+    async def _validate_stored(self, parsed: ValidateRequest) -> Decision:
+        """``consent_id``: a consent the CM holds (originated — e.g. an assisted
+        consent verified by staff). Checks the consent's state, the partner
+        that obtained it and the subject; each grant is narrowed to the
+        partner's CURRENT policy for its controller (and requested_scopes).
+        With ``issue_receipts``, signs one receipt per granted controller in
+        exactly the format used for a partner-signed consent."""
+        from ..schemas.common import SubjectId
+
+        now = datetime.now(timezone.utc)
+        consent_id = parsed.consent_id
+        partner_aud = parsed.consent_partner_id
+        ctx_hash = sha256_hex(f"consent_id:{consent_id}:{partner_aud or ''}".encode("utf-8"))
+        presenter = parsed.partner_id
+        if parsed.issue_receipts:
+            refusal = self.exchange.issuing_refusal(presenter)
+            if refusal:
+                return await self._deny(
+                    ReasonCode.receipt_presenter_not_allowed, refusal, now, ctx_hash,
+                    data_controller=parsed.data_controller,
+                )
+
+        async with async_session()() as session:
+            artefact = await session.get(ConsentArtefact, consent_id)
+            binding = (
+                await session.get(Partner, artefact.partner_id) if artefact is not None else None
+            )
+        if artefact is None or artefact.source != ArtefactSource.originated.value:
+            return await self._deny(
+                ReasonCode.unknown_consent, "no stored consent with this consent_id",
+                now, ctx_hash, data_controller=parsed.data_controller,
+            )
+        log = {"partner_id": artefact.partner_id, "consent_id": artefact.id}
+        if artefact.status == ArtefactStatus.revoked.value:
+            return await self._deny(
+                ReasonCode.revoked, "consent revoked", now, ctx_hash, **log
+            )
+        if (
+            artefact.status == ArtefactStatus.expired.value
+            or _aware(artefact.valid_until) < now
+        ):
+            return await self._deny(
+                ReasonCode.expired, "consent expired", now, ctx_hash, **log
+            )
+        if artefact.status != ArtefactStatus.active.value:
+            return await self._deny(
+                ReasonCode.unknown_consent, f"consent is '{artefact.status}'",
+                now, ctx_hash, **log,
+            )
+        if _aware(artefact.valid_from) > now:
+            return await self._deny(
+                ReasonCode.not_yet_valid, "consent not yet valid", now, ctx_hash, **log
+            )
+        audience = binding.audience if binding is not None else None
+        if not partner_aud or partner_aud != audience:
+            return await self._deny(
+                ReasonCode.partner_mismatch,
+                "consent_partner_id is not the partner the consent was given to",
+                now, ctx_hash, **log,
+            )
+        ctx_subject = parsed.request_context.subject_id if parsed.request_context else None
+        if self._subject_mismatch(
+            ctx_subject, artefact.subject_id_type, artefact.subject_id_value
+        ):
+            return await self._deny(
+                ReasonCode.subject_mismatch,
+                "request_context.subject_id does not match the consent subject",
+                now, ctx_hash, **log,
+            )
+
+        stored = artefact.grants or [
+            {
+                "data_controller": artefact.controller_id,
+                "effective_data_scopes": artefact.effective_data_scopes or [],
+            }
+        ]
+        if parsed.data_controller:
+            stored = [g for g in stored if g.get("data_controller") == parsed.data_controller]
+            if not stored:
+                return await self._deny(
+                    ReasonCode.controller_not_granted,
+                    f"consent has no grant for data_controller '{parsed.data_controller}'",
+                    now, ctx_hash, data_controller=parsed.data_controller, **log,
+                )
+        requested = (
+            set(parsed.request_context.requested_scopes)
+            if parsed.request_context and parsed.request_context.requested_scopes
+            else None
+        )
+        granted: dict[str, tuple[list, object, Optional[int]]] = {}
+        for g in stored:
+            controller = g.get("data_controller")
+            if not controller:
+                continue
+            material = await self.partners.get_verification_material(audience, controller)
+            policy = material["policy"] if material else None
+            if policy is None:
+                continue
+            effective = set(g.get("effective_data_scopes") or []) & set(
+                policy.allowed_data_scopes or []
+            )
+            if requested is not None:
+                effective &= requested
+            if effective:
+                granted[controller] = (sorted(effective), material["partner"], policy.version)
+        if not granted:
+            return await self._deny(
+                ReasonCode.scope_exceeds_policy,
+                "no consented scope is permitted by the partner's current policy",
+                now, ctx_hash, data_controller=parsed.data_controller, **log,
+            )
+
+        subject = SubjectId(type=artefact.subject_id_type, value=artefact.subject_id_value)
+        decisions = {
+            controller: Decision(
+                decision="permit", reason_code=ReasonCode.ok, consent_id=artefact.id,
+                subject_id=subject, data_controller=controller,
+                effective_data_scopes=scopes, valid_until=artefact.valid_until,
+                policy_version=version, evaluated_at=now,
+            )
+            for controller, (scopes, _, version) in granted.items()
+        }
+        async with async_session()() as session:
+            for controller, (_, partner, version) in granted.items():
+                session.add(
+                    DecisionLog(
+                        partner_id=partner.id, consent_id=artefact.id,
+                        data_controller=controller, decision="permit",
+                        reason_code=ReasonCode.ok.value, policy_version=version,
+                        request_ctx_hash=ctx_hash,
+                    )
+                )
+            await session.commit()
+
+        receipts = None
+        if parsed.issue_receipts:
+            # The consent as issue() reads it: the partner that obtained it,
+            # its purpose, and when it was given (the artefact's creation).
+            consent = SimpleNamespace(
+                aud=partner_aud, purpose=artefact.purpose, issued_at=artefact.created_at
+            )
+            receipts = {
+                controller: await self.exchange.issue(consent, decision, presenter, now)
+                for controller, decision in decisions.items()
+            }
+        grants = {c: d.effective_data_scopes for c, d in decisions.items()}
+        stored_receipt = await self._stored_receipt_id(artefact.id)
+        if len(decisions) == 1:
+            return next(iter(decisions.values())).model_copy(
+                update={"receipts": receipts, "grants": grants, "receipt_id": stored_receipt}
+            )
+        return Decision(
+            decision="permit", reason_code=ReasonCode.ok, consent_id=artefact.id,
+            receipt_id=stored_receipt, subject_id=subject, valid_until=artefact.valid_until,
+            evaluated_at=now, receipts=receipts, grants=grants,
+        )
+
+    async def _stored_receipt_id(self, consent_id: str) -> Optional[str]:
+        async with async_session()() as session:
+            result = await session.execute(
+                select(ConsentReceipt.id).where(ConsentReceipt.consent_id == consent_id)
+            )
+            return result.scalars().first()
 
     # ── Agri Stack exchange: accepting receipts (department role) ───────────
 
@@ -584,11 +758,13 @@ class VerificationService(BaseService):
         partner_id: Optional[str] = None, jti: Optional[str] = None,
         policy_version: Optional[int] = None, data_controller: Optional[str] = None,
         receipt_jti: Optional[str] = None, receipt_issuer: Optional[str] = None,
+        consent_id: Optional[str] = None,
     ) -> Decision:
         async with async_session()() as session:
             session.add(
                 DecisionLog(
-                    partner_id=partner_id, object_jti=jti, data_controller=data_controller,
+                    partner_id=partner_id, consent_id=consent_id, object_jti=jti,
+                    data_controller=data_controller,
                     decision="deny",
                     reason_code=reason.value, detail=detail,
                     policy_version=policy_version, request_ctx_hash=ctx_hash,

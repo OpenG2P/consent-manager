@@ -10,10 +10,12 @@ from openg2p_fastapi_common.app import Initializer as BaseInitializer
 
 from .controllers import (
     AweController,
+    ConsentVerificationController,
     DecisionsController,
     LifecycleController,
     MetaController,
     PartnerController,
+    PartnerPortalController,
     SubjectController,
     VerificationController,
     WellKnownController,
@@ -23,6 +25,7 @@ from .models import (
     AuthContext,
     AweProcessedEvent,
     ConsentArtefact,
+    ConsentEvidence,
     ConsentReceipt,
     ConsentRequest,
     DecisionLog,
@@ -32,10 +35,12 @@ from .models import (
     RevocationRecord,
 )
 from .services import (
+    AssistedConsentService,
     AweClient,
     AweWebhookService,
     ConsentService,
     CryptoService,
+    EvidenceService,
     ExchangeService,
     LifecycleService,
     PartnerService,
@@ -61,6 +66,8 @@ class Initializer(BaseInitializer):
         VerificationService()
         ConsentService()
         LifecycleService()
+        EvidenceService()
+        AssistedConsentService()  # depends on Lifecycle/Evidence/Receipt
         AweClient()
         AweWebhookService()  # depends on PartnerService
 
@@ -83,6 +90,10 @@ class Initializer(BaseInitializer):
             MetaController().post_init()
             AweController().post_init()
             DecisionsController().post_init()
+            # Consent scenario 1: staff verify assisted consents; partner users
+            # (partner realm, own token check) use the partner portal API.
+            ConsentVerificationController().post_init()
+            PartnerPortalController().post_init()
         if beneficiary:
             # BENEFICIARY api — Keycloak beneficiary realm. /my/* + origination.
             SubjectController().post_init()
@@ -97,6 +108,7 @@ class Initializer(BaseInitializer):
                 Partner,
                 PartnerPolicy,
                 ConsentRequest,
+                ConsentEvidence,
                 AuthContext,
                 ConsentArtefact,
                 ConsentReceipt,
@@ -253,6 +265,45 @@ class Initializer(BaseInitializer):
                             f"{column} VARCHAR(255)"
                         )
                     )
+                # ── Consent scenario 1: assisted requests + staff verification ──
+                for column, ddl in (
+                    ("method", "VARCHAR(20)"),
+                    ("use_case", "VARCHAR(255)"),
+                    ("created_by", "VARCHAR(255)"),
+                    ("partner_audience", "VARCHAR(255)"),
+                    ("submitted_at", "TIMESTAMPTZ"),
+                    ("verified_by", "VARCHAR(255)"),
+                    ("verified_at", "TIMESTAMPTZ"),
+                    ("verification_note", "TEXT"),
+                ):
+                    await conn.execute(
+                        text(
+                            "ALTER TABLE consent_requests ADD COLUMN IF NOT EXISTS "
+                            f"{column} {ddl}"
+                        )
+                    )
+                await conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_consent_requests_partner_audience "
+                        "ON consent_requests (partner_audience)"
+                    )
+                )
+                # How the subject confirmed, and the request a consent came from.
+                await conn.execute(
+                    text("ALTER TABLE consent_artefacts ADD COLUMN IF NOT EXISTS assurance JSONB")
+                )
+                await conn.execute(
+                    text(
+                        "ALTER TABLE consent_artefacts ADD COLUMN IF NOT EXISTS "
+                        "consent_request_id VARCHAR"
+                    )
+                )
+                await conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_consent_artefacts_consent_request_id "
+                        "ON consent_artefacts (consent_request_id)"
+                    )
+                )
             _logger.info("Database migration complete")
 
         asyncio.run(migrate())

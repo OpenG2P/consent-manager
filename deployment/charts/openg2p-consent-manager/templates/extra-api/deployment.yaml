@@ -60,6 +60,11 @@ spec:
             {{- with (include "consentManager.exchangeEnv" $ | trim) }}
             {{- . | nindent 12 }}
             {{- end }}
+            {{- if eq (toString .Values.apiAudience) "staff" }}
+            {{- with (include "consentManager.partnerPortalEnv" $ | trim) }}
+            {{- . | nindent 12 }}
+            {{- end }}
+            {{- end }}
             - name: CONSENT_MANAGER_API_AUDIENCE
               value: {{ .Values.apiAudience | quote }}
             - name: CONSENT_MANAGER_AUTH_ENABLED

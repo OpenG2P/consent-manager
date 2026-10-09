@@ -224,3 +224,48 @@ questions:
   label: Receipt Status Check (department)
   group: Agri Stack exchange
   show_if: global.agriStackExchange.enabled=true
+
+# --------------------------- Partner portal -------------------------
+# Off by default: a standalone install leaves this alone. ON deploys the
+# partner portal SPA, provisions the Keycloak `partner` realm + client, gives
+# the staff api the partner-realm token settings and turns on evidence storage.
+- variable: partnerPortal.enabled
+  description: "Deploy the partner portal (assisted consent collection by partner users, e.g. bank staff). Also creates the Keycloak realm `partner` with the consent-partner-portal client. Then, once, in Keycloak (realm partner): create realm roles PARTNER_OPERATOR and PARTNER_ADMIN, declare the user-profile attribute partner_id, add a User Attribute mapper partner_id to the client's dedicated scope, and create the partner users (attribute partner_id + a role). Test users: set partnerPortal.testUsers in YAML (username, partnerId, roles); their passwords are generated into the <release>-partner-test-users Secret."
+  type: boolean
+  default: false
+  label: Partner Portal
+  group: Partner portal
+- variable: global.consentPartnerPortalHostname
+  description: Hostname of the partner portal (also its Keycloak client's redirect URI)
+  type: string
+  label: Partner Portal Hostname
+  group: Partner portal
+  show_if: partnerPortal.enabled=true
+- variable: partnerPortal.compositeUrl
+  description: "Optional Agri Stack composite base URL (e.g. https://composite.<domain>). When set, the portal lists the composite's use cases and can prefill a request from one. Empty = no use-case catalogue."
+  type: string
+  default: ""
+  label: Composite URL
+  group: Partner portal
+  show_if: partnerPortal.enabled=true
+- variable: evidence.s3.endpoint
+  description: "S3 endpoint for the uploaded signed consent forms (commons Garage by default). The bucket must exist and the key be allowed on it."
+  type: string
+  default: http://commons-garage:3900
+  label: Evidence Storage Endpoint
+  group: Partner portal
+  show_if: partnerPortal.enabled=true
+- variable: evidence.s3.bucket
+  description: Bucket for the signed consent forms
+  type: string
+  default: consent-evidence
+  label: Evidence Bucket
+  group: Partner portal
+  show_if: partnerPortal.enabled=true
+- variable: evidence.s3.existingSecret
+  description: "Secret holding the S3 access key (key root-user) and secret key (key root-password). Default: the commons Garage Secret commons-minio."
+  type: string
+  default: commons-minio
+  label: Evidence Storage Secret
+  group: Partner portal
+  show_if: partnerPortal.enabled=true

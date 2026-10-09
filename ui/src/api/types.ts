@@ -192,3 +192,45 @@ export interface ConsentRequest {
   valid_until?: string | null;
   created_at: string;
 }
+
+// ── Consent verifications (assisted consent, staff check of the signed form) ──
+// /consent/v1/verifications — a partner user raised the request in the partner
+// portal and uploaded the evidence; staff approve (creates the consent) or reject.
+export type VerificationStatus = "pending_verification" | "approved" | "rejected";
+
+export interface VerificationEvidence {
+  id: string;
+  kind: "signed_form" | "other" | string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  sha256: string;
+  uploaded_by?: string | null;
+  uploaded_at: string;
+}
+
+export interface VerificationRequest {
+  id: string;
+  status: string;
+  method?: string | null;
+  use_case?: string | null;
+  subject_id: { type: string; value: string };
+  purpose: Purpose | string;
+  grants: Grant[];
+  valid_from?: string | null;
+  valid_until?: string | null;
+  created_by?: string | null;
+  created_at: string;
+  submitted_at?: string | null;
+  verified_by?: string | null;
+  verified_at?: string | null;
+  verification_note?: string | null;
+  consent_id?: string | null;
+  partner_audience?: string | null;
+  evidence?: VerificationEvidence[];
+}
+
+export interface OffsetPage<T> {
+  total: number;
+  items: T[];
+}

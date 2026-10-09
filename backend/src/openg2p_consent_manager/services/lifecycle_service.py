@@ -49,29 +49,7 @@ class LifecycleService(BaseService):
         if data.grants is not None:
             # One request, several controllers: each grant must be within the
             # partner's binding + active policy for that controller.
-            grants = []
-            for g in data.grants:
-                binding = await self.partners.get_binding(partner.audience, g.data_controller)
-                if binding is None or binding.status != PartnerStatus.active.value:
-                    raise LifecycleError(
-                        422, f"partner not bound to data_controller '{g.data_controller}'"
-                    )
-                policy = await self.partners.get_policy(binding.id)
-                if policy is None:
-                    raise LifecycleError(
-                        404, f"no active policy for data_controller '{g.data_controller}'"
-                    )
-                if not set(g.data_scopes).issubset(set(policy.allowed_data_scopes or [])):
-                    raise LifecycleError(
-                        422, f"scope_exceeds_policy for data_controller '{g.data_controller}'"
-                    )
-                grants.append(
-                    {
-                        "data_controller": g.data_controller,
-                        "data_scopes": list(g.data_scopes),
-                        "partner_binding_id": binding.id,
-                    }
-                )
+            grants = [g for g, _ in await self.resolve_grants(partner.audience, data.grants)]
             requested_scopes = sorted({s for g in grants for s in g["data_scopes"]})
             controller_id = grants[0]["data_controller"] if len(grants) == 1 else None
         else:
@@ -102,6 +80,38 @@ class LifecycleService(BaseService):
             await session.commit()
             await session.refresh(req)
             return req
+
+    async def resolve_grants(self, audience: str, requested) -> list:
+        """Check each requested grant (``data_controller`` + ``data_scopes``)
+        against the partner's binding to that controller and its active policy.
+        Returns ``[(grant dict, policy)]``; raises LifecycleError."""
+        resolved = []
+        for g in requested:
+            binding = await self.partners.get_binding(audience, g.data_controller)
+            if binding is None or binding.status != PartnerStatus.active.value:
+                raise LifecycleError(
+                    422, f"partner not bound to data_controller '{g.data_controller}'"
+                )
+            policy = await self.partners.get_policy(binding.id)
+            if policy is None:
+                raise LifecycleError(
+                    404, f"no active policy for data_controller '{g.data_controller}'"
+                )
+            if not set(g.data_scopes).issubset(set(policy.allowed_data_scopes or [])):
+                raise LifecycleError(
+                    422, f"scope_exceeds_policy for data_controller '{g.data_controller}'"
+                )
+            resolved.append(
+                (
+                    {
+                        "data_controller": g.data_controller,
+                        "data_scopes": list(g.data_scopes),
+                        "partner_binding_id": binding.id,
+                    },
+                    policy,
+                )
+            )
+        return resolved
 
     async def get_request(self, request_id: str) -> Optional[ConsentRequest]:
         async with async_session()() as session:
@@ -147,8 +157,8 @@ class LifecycleService(BaseService):
         subject approves each controller's scopes, and an omitted controller is
         declined. The resulting artefact holds the approved grants.
 
-        Note: an originated consent is not (yet) presentable at /validate — that
-        path takes a partner-signed JWS only."""
+        An originated consent is presentable at /validate by its ID
+        (``consent_id``)."""
         async with async_session()() as session:
             req = await session.get(ConsentRequest, request_id)
             if req is None:
@@ -198,6 +208,7 @@ class LifecycleService(BaseService):
                 source=ArtefactSource.originated.value,
                 policy_version=policy.version if policy else None,
                 auth_context_id=ctx.id,
+                consent_request_id=req.id,
                 status=ArtefactStatus.active.value,
             )
             receipt = self.receipts.build_receipt(artefact, partner)
@@ -294,6 +305,7 @@ class LifecycleService(BaseService):
             source=ArtefactSource.originated.value,
             policy_version=grants[0]["policy_version"] if len(grants) == 1 else None,
             auth_context_id=ctx.id,
+            consent_request_id=req.id,
             status=ArtefactStatus.active.value,
         )
         receipt = self.receipts.build_receipt(artefact, partner)

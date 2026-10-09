@@ -64,6 +64,17 @@ permit `consent_id`, `receipt_id`, `subject_id` (the consent's subject),
   `aud` must be `data_controller` and its `presenter` the caller's
   `partner_id`. Effective scopes = receipt scopes ∩ this CM's policy for the
   presenter at that controller.
+
+**A stored consent by its ID** (instead of `consent_jws`; exactly one of the
+two, else HTTP 400): `consent_id` and `consent_partner_id` (the partner that
+obtained it). The consent must be an originated one (deny `unknown_consent`),
+active (`revoked` / `expired` / `not_yet_valid`), obtained by
+`consent_partner_id` (`partner_mismatch`) and for the subject in
+`request_context.subject_id` (`subject_mismatch`). Per grant, effective scopes
+= the consent's effective scopes ∩ the partner's CURRENT policy for that
+controller ∩ `requested_scopes`; a controller left with none is not granted.
+The permit carries `grants: {data_controller: [scopes]}` (also returned with
+`issue_receipts`); with `issue_receipts`, one receipt per granted controller.
 """
 
 
@@ -111,6 +122,13 @@ class VerificationController(BaseController):
         # Parse defensively so a malformed request is a clean deny, not a 422.
         # The consent object itself is a compact JWS (consent_jws); its claims
         # and signature are validated inside the verification service.
+        if not isinstance(payload, dict) or bool(payload.get("consent_jws")) == bool(
+            payload.get("consent_id")
+        ):
+            return JSONResponse(
+                status_code=400,
+                content={"error": "give exactly one of 'consent_jws' or 'consent_id'"},
+            )
         try:
             parsed = ValidateRequest(**payload)
         except ValidationError as exc:

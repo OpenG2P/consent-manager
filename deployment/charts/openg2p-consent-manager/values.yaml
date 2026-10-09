@@ -16,6 +16,12 @@ global:
   consentManagerPartnerHostname: 'consent-manager-partner.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
   # beneficiary self-service (/my/*, origination) — scaffolded, disabled:
   consentManagerBeneHostname: 'consent-manager-bene.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
+  # partner portal SPA (assisted consent collection) — used only when
+  # partnerPortal.enabled. Also the redirect/web origin of its Keycloak client.
+  consentPartnerPortalHostname: 'consent-partner-portal.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
+  # Keycloak realm of partner users (partner portal). Used only when
+  # partnerPortal.enabled; the partner-keycloak-init block creates it.
+  consentPartnerRealm: partner
 
   # ── Keycloak (caller auth) ──────────────────────────────────────────────
   keycloakBaseUrl: 'https://keycloak.{{ .Values.global.namespace | default .Release.Namespace }}.openg2p.org'
@@ -258,6 +264,50 @@ keycloak-init:
             # pattern. This avoids referencing a PM Keycloak client from CM's
             # keycloak-init (a missing client would fail this init job).
 
+# Partner realm for the partner portal — a second keycloak-init run, installed
+# only when partnerPortal.enabled (Chart.yaml condition). Set `enabled: false`
+# here to skip it while the portal is on (realm managed by hand).
+#
+# keycloak-init (0.0.0-develop.60) creates the realm and the public client. It
+# CANNOT create realm roles, declare user-profile attributes, add custom
+# protocol mappers, enforce PKCE or set user attributes — do these once in the
+# Keycloak admin console (realm `partner`) after the first install:
+#   1. Realm roles → Create role: PARTNER_OPERATOR, then PARTNER_ADMIN.
+#   2. Realm settings → User profile → Create attribute `partner_id`
+#      (who can view/edit: admin only). Keycloak 24+ drops undeclared attributes.
+#   3. Clients → consent-partner-portal → Client scopes →
+#      consent-partner-portal-dedicated → Add mapper → By configuration →
+#      User Attribute: name `partner_id`, user attribute `partner_id`, token
+#      claim name `partner_id`, JSON type String, add to access token ON
+#      (ID token / userinfo ON too).
+#   4. Clients → consent-partner-portal → Advanced → PKCE method S256
+#      (optional: the portal always sends PKCE; this makes it mandatory).
+#   5. Users → Add user per partner employee: set attribute `partner_id` (the
+#      partner's ID in Partner Management, e.g. bank-a), assign PARTNER_OPERATOR
+#      or PARTNER_ADMIN, set a password. For partnerPortal.testUsers use the
+#      passwords in the <release>-partner-test-users Secret.
+partner-keycloak-init:
+  keycloak:
+    url: 'http://commons-keycloak:80'
+    user: 'admin'
+    password: ''
+    existingSecret: 'commons-keycloak'
+    existingSecretKey: 'admin-password'
+  realms:
+    # Must equal global.consentPartnerRealm.
+    partner:
+      clients:
+        # PUBLIC browser client for the partner portal SPA (standard flow; the
+        # SPA uses PKCE). Redirects back to the portal host only.
+        - clientId: consent-partner-portal
+          name: OpenG2P Consent Partner Portal
+          publicClient: true
+          standardFlowEnabled: true
+          redirectUris:
+            - 'https://{{ tpl .Values.global.consentPartnerPortalHostname $ }}/*'
+          webOrigins:
+            - 'https://{{ tpl .Values.global.consentPartnerPortalHostname $ }}'
+
 # Admin console SPA (React → nginx), served on the SAME host as the staff API
 # (a single VirtualService routes /consent/ → staff API, / → this UI). Runtime
 # config.json (Keycloak URL/realm/clientId, roles) is injected via a ConfigMap.
@@ -317,6 +367,121 @@ ui:
     periodSeconds: 10
   # Client id of the PUBLIC browser client provisioned in keycloak-init above.
   clientId: consent-manager-ui
+
+# ── Partner portal (OFF by default) ─────────────────────────────────────────
+# SPA for partner users (e.g. bank staff) to collect assisted consent: create a
+# consent request, upload the signed form, submit it for staff verification.
+# Logs in against the Keycloak `partner` realm (see partner-keycloak-init). Off
+# for a standalone install: nothing below is rendered and CM behaves as before.
+# When ON it also:
+#   - sets the staff api's partner-realm token settings (partner portal API
+#     /consent/v1/partner-portal is served by the STAFF api deployment), and
+#   - turns on evidence storage (see `evidence` below).
+partnerPortal:
+  enabled: false
+  nameOverride: partner-portal
+  hostname: '{{ tpl .Values.global.consentPartnerPortalHostname $ }}'
+  # Base URL the SPA calls the partner portal API at. Empty (default) = same
+  # origin: the portal's VirtualService routes /consent/v1/partner-portal/ on
+  # the portal host to the staff api (no CORS needed). Set a full URL only if
+  # that host allows the portal origin (CORS).
+  apiBaseUrl: ''
+  # Optional Agri Stack composite base URL (e.g. https://composite.<domain>);
+  # when set the portal shows the use-case catalogue (GET /composite/v1/use-cases).
+  compositeUrl: ''
+  keycloak:
+    # Public Keycloak URL (browser login + the `iss` of partner tokens).
+    url: '{{ tpl .Values.global.keycloakBaseUrl $ }}'
+    realm: '{{ tpl .Values.global.consentPartnerRealm $ }}'
+    # Must match the client in partner-keycloak-init.
+    clientId: consent-partner-portal
+    # In-cluster Keycloak URL the CM api fetches the partner realm JWKS from.
+    internalUrl: '{{ index .Values "keycloak-init" "keycloak" "url" }}'
+    # Issuer CM accepts on partner tokens, and where it fetches their keys.
+    issuerUrl: '{{ tpl .Values.partnerPortal.keycloak.url $ }}/realms/{{ tpl .Values.partnerPortal.keycloak.realm $ }}'
+    jwksUrl: '{{ tpl .Values.partnerPortal.keycloak.internalUrl $ }}/realms/{{ tpl .Values.partnerPortal.keycloak.realm $ }}/protocol/openid-connect/certs'
+  operatorRole: PARTNER_OPERATOR
+  adminRole: PARTNER_ADMIN
+  # Test partner users (testing only). For each entry the chart keeps a
+  # generated password in the Secret below (key = username; kept across
+  # upgrades and uninstall). keycloak-init cannot set user attributes or read
+  # passwords from a Secret, so create these users by hand (see the steps above
+  # partner-keycloak-init) with these values:
+  #   - {username: bank-a-operator, partnerId: bank-a, roles: [PARTNER_OPERATOR]}
+  testUsers: []
+  testUsersSecretName: '{{ .Release.Name }}-partner-test-users'
+  replicaCount: 1
+  updateStrategy:
+    type: RollingUpdate
+  autoscaling:
+    enabled: false
+  serviceAccount:
+    create: false
+    name: ""
+  image:
+    repository: openg2p/consent-manager-partner-portal
+    tag: develop
+    pullPolicy: Always
+  containerPort: 8080
+  podSecurityContext:
+    enabled: false
+    fsGroup: 101          # nginx-unprivileged user
+  containerSecurityContext:
+    enabled: false
+    runAsUser: 101
+    runAsNonRoot: true
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+  service:
+    type: ClusterIP
+    port: 80
+  startupProbe:
+    enabled: true
+    httpGet:
+      path: /
+      port: http
+    periodSeconds: 5
+    failureThreshold: 10
+  livenessProbe:
+    enabled: true
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 30
+  readinessProbe:
+    enabled: true
+    httpGet:
+      path: /
+      port: http
+    periodSeconds: 10
+
+# ── Consent evidence storage (signed consent forms) ─────────────────────────
+# S3-compatible object storage for evidence uploaded through the partner
+# portal. Rendered into the staff api when `enabled` OR partnerPortal.enabled;
+# otherwise unset (uploads answer 503). Defaults: the OpenG2P commons Garage
+# and its shared read-write key (Secret `commons-minio`, written by the commons
+# Garage init job — historical name).
+# The bucket must exist and the key must be allowed on it. The commons Garage
+# key cannot create buckets, so create it once (garage pod):
+#   garage bucket create consent-evidence
+#   garage bucket allow --read --write --owner consent-evidence --key garage-key
+evidence:
+  enabled: false
+  s3:
+    endpoint: 'http://commons-garage:3900'
+    bucket: consent-evidence
+    # Must equal the Garage S3 region (commons Garage: us-east-1).
+    region: us-east-1
+    existingSecret: commons-minio
+    accessKeyKey: root-user
+    secretKeyKey: root-password
+  maxBytes: 10485760
 
 # Additional API-audience deployments in THIS chart (same image, separate
 # Deployment/Service/VirtualService). Each entry is merged OVER consentManagerApi,

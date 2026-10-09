@@ -35,6 +35,13 @@ class ReasonCode(str, Enum):
     presenter_mismatch = "presenter_mismatch"
     # The receipt's status could not be checked at its issuer (fail closed).
     receipt_status_unavailable = "receipt_status_unavailable"
+    # ── A stored (originated) consent presented by its ID ──
+    # No originated consent with that ID.
+    unknown_consent = "unknown_consent"
+    # The consent's validity has not started yet.
+    not_yet_valid = "not_yet_valid"
+    # consent_partner_id is not the partner the consent was given to.
+    partner_mismatch = "partner_mismatch"
 
 
 class SubjectId(BaseModel):

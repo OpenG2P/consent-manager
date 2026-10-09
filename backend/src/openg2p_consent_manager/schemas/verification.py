@@ -94,7 +94,12 @@ class ValidateRequest(BaseModel):
     # The partner-signed consent object, as a compact JWS (header.payload.sig).
     # CM recovers the claims from the payload and verifies the signature against
     # the partner's Partner-Management key referenced by the JWS ``kid``.
-    consent_jws: str
+    # Exactly one of consent_jws / consent_id.
+    consent_jws: Optional[str] = None
+    # A stored (originated) consent, by its ID, and the partner that obtained
+    # it (its audience, e.g. bank-a) — checked against the consent.
+    consent_id: Optional[str] = None
+    consent_partner_id: Optional[str] = None
     partner_id: Optional[str] = None
     # The calling registry. Required when the consent carries ``grants`` (selects
     # the grant); optional for a legacy consent, where it must equal the
@@ -105,6 +110,12 @@ class ValidateRequest(BaseModel):
     # granted controller (or just ``data_controller`` if given). Only for a
     # caller (``partner_id``) listed in the CM's ``receipt_presenters``.
     issue_receipts: bool = False
+
+    @model_validator(mode="after")
+    def _one_consent(self):
+        if bool(self.consent_jws) == bool(self.consent_id):
+            raise ValueError("give exactly one of 'consent_jws' or 'consent_id'")
+        return self
 
 
 class DecisionLogResponse(BaseModel):
@@ -140,3 +151,6 @@ class Decision(BaseModel):
     evaluated_at: datetime
     # Exchange role, issue_receipts=true and permit: {data_controller: receipt JWS}.
     receipts: Optional[Dict[str, str]] = None
+    # Permit for a stored consent (consent_id) or with issue_receipts:
+    # {data_controller: effective scopes}.
+    grants: Optional[Dict[str, List[str]]] = None

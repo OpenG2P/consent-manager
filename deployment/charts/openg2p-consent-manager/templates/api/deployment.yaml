@@ -50,6 +50,11 @@ spec:
             {{- with (include "consentManager.exchangeEnv" $ | trim) }}
             {{- . | nindent 12 }}
             {{- end }}
+            {{- if eq (toString .Values.apiAudience) "staff" }}
+            {{- with (include "consentManager.partnerPortalEnv" $ | trim) }}
+            {{- . | nindent 12 }}
+            {{- end }}
+            {{- end }}
             # Per-audience overrides (the 4-API pattern): which controllers this
             # instance mounts, and whether Keycloak auth applies (partner=off).
             - name: CONSENT_MANAGER_API_AUDIENCE

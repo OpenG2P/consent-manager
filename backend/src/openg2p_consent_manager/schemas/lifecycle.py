@@ -90,6 +90,9 @@ class ArtefactResponse(BaseModel):
     effective_data_scopes: List[str]
     # Originated grants consent: one entry per approved controller.
     grants: Optional[List[Dict[str, Any]]] = None
+    # How the subject confirmed (originated consents), and its request.
+    assurance: Optional[Dict[str, Any]] = None
+    consent_request_id: Optional[str] = None
     status: str
     source: str
     valid_from: datetime

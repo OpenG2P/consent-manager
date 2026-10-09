@@ -26,10 +26,24 @@ class RequestStatus(str, Enum):
     approved = "approved"
     denied = "denied"
     expired = "expired"
+    # Assisted consent (scenario 1): the partner user submitted the evidence;
+    # staff verify it (approved) or reject it. The partner may cancel before.
+    pending_verification = "pending_verification"
+    rejected = "rejected"
+    cancelled = "cancelled"
+
+
+class RequestMethod(str, Enum):
+    """How the subject confirms the request."""
+
+    assisted = "assisted"  # in person; evidence (signed form) verified by staff
+    sms = "sms"
+    self_service = "self_service"
 
 
 class ConsentRequest(BaseORMModelWithId):
-    """Origination flow — a pending request before the subject authenticates."""
+    """Origination flow — a pending request before the subject authenticates
+    (or, for an assisted request, before staff verify its evidence)."""
 
     __tablename__ = "consent_requests"
 
@@ -48,6 +62,43 @@ class ConsentRequest(BaseORMModelWithId):
     valid_from: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     valid_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default=RequestStatus.pending.value, index=True)
+
+    # ── Partner portal (consent scenario 1); NULL for other requests ──
+    method: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # Display label of the use case the request was made for (e.g.
+    # loan-profile@1); the grants are still what is asked for.
+    use_case: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # The partner user (preferred_username in the partner realm) and partner.
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    partner_audience: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    submitted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # The staff user who approved/rejected the evidence.
+    verified_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    verification_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class EvidenceKind(str, Enum):
+    signed_form = "signed_form"
+    other = "other"
+
+
+class ConsentEvidence(BaseORMModelWithId):
+    """A file uploaded on a consent request (e.g. the subject's signed form).
+    The bytes live in object storage under ``storage_key``; ``sha256`` is of
+    the stored bytes."""
+
+    __tablename__ = "consent_evidence"
+
+    consent_request_id: Mapped[str] = mapped_column(String, index=True)
+    kind: Mapped[str] = mapped_column(String(20), default=EvidenceKind.signed_form.value)
+    filename: Mapped[str] = mapped_column(String(255))
+    content_type: Mapped[str] = mapped_column(String(100))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    sha256: Mapped[str] = mapped_column(String(64))
+    storage_key: Mapped[str] = mapped_column(String(512))
+    uploaded_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class AuthContext(BaseORMModelWithId):
@@ -105,6 +156,12 @@ class ConsentArtefact(BaseORMModelWithId):
     # Originated grants consent: [{"data_controller", "data_scopes",
     # "effective_data_scopes", "partner_binding_id", "policy_version"}].
     grants: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
+    # Originated consent: how the subject confirmed, e.g. {"method": "assisted",
+    # "evidence": ["signed_form"], "verified_by", "verified_at",
+    # "subject_authenticated": false}. NULL for other artefacts.
+    assurance: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    # The consent request it was originated from (NULL for embedded/receipt).
+    consent_request_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
 
     status: Mapped[str] = mapped_column(String(20), default=ArtefactStatus.active.value, index=True)
     revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

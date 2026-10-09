@@ -1,0 +1,15 @@
+// Shared react-query hooks.
+import { useQuery } from "@tanstack/react-query";
+import { api, listUseCases } from "./client";
+
+export function useMe() {
+  return useQuery({ queryKey: ["me"], queryFn: api.me, staleTime: 5 * 60_000 });
+}
+
+export function useBindings() {
+  return useQuery({ queryKey: ["bindings"], queryFn: api.bindings, staleTime: 60_000 });
+}
+
+export function useUseCases(enabled = true) {
+  return useQuery({ queryKey: ["use-cases"], queryFn: listUseCases, staleTime: 5 * 60_000, enabled });
+}
