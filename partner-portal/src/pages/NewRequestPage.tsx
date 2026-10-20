@@ -2,10 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, compositeUrl } from "../api/client";
-import { useBindings, useRequestSettings, useUseCases } from "../api/hooks";
-import type { Binding, ConsentRequestCreate, UseCase } from "../api/types";
+import { useAccess, useRequestSettings, useUseCases } from "../api/hooks";
+import type { ConsentRequestCreate, ScopePolicy, UseCase } from "../api/types";
 import { CheckboxGroup } from "../components/FormControls";
 import { ErrorNotice } from "../components/Status";
+import UseCaseRequestForm from "../components/UseCaseRequestForm";
+import { dayEnd, dayStart, today } from "../format";
 
 // The ID types a partner user can enter in Phase 1; types allowed by the
 // partner's policies are added to these.
@@ -20,26 +22,23 @@ function scopesFromUseCase(u: UseCase): Record<string, string[]> {
   return out;
 }
 
-// A date input (yyyy-mm-dd) as an ISO timestamp at the start / end of that local day.
-function dayStart(d: string): string {
-  return new Date(`${d}T00:00:00`).toISOString();
-}
-function dayEnd(d: string): string {
-  return new Date(`${d}T23:59:59`).toISOString();
-}
-function today(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+// At the Exchange (consent_by "use_case") a request names a granted use case;
+// elsewhere it names registries and data within the scope policies.
+export default function NewRequestPage() {
+  const settings = useRequestSettings();
+  if (settings.isLoading) return <div className="loading">Loading…</div>;
+  if (settings.error) return <ErrorNotice error={settings.error} what="the request settings" />;
+  if (settings.data?.consent_by === "use_case") return <UseCaseRequestForm />;
+  return <ScopeRequestForm />;
 }
 
-export default function NewRequestPage() {
+function ScopeRequestForm() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [params] = useSearchParams();
   const useCaseRef = params.get("use_case") ?? "";
 
-  const bindings = useBindings();
+  const access = useAccess();
   const useCases = useUseCases(!!useCaseRef && !!compositeUrl());
   const useCase = useCases.data?.find((u) => u.use_case === useCaseRef);
 
@@ -69,7 +68,7 @@ export default function NewRequestPage() {
     setPrefilledFrom(useCase.use_case);
   }, [useCase, prefilledFrom]);
 
-  const list: Binding[] = useMemo(() => bindings.data ?? [], [bindings.data]);
+  const list: ScopePolicy[] = useMemo(() => access.data?.scope_policies ?? [], [access.data]);
   const byController = useMemo(
     () => Object.fromEntries(list.map((b) => [b.data_controller, b])),
     [list]
@@ -173,15 +172,15 @@ export default function NewRequestPage() {
         </div>
       )}
 
-      {bindings.isLoading && <div className="loading">Loading your policies…</div>}
-      {bindings.error && <ErrorNotice error={bindings.error} what="your policies" />}
-      {bindings.data && list.length === 0 && (
+      {access.isLoading && <div className="loading">Loading your policies…</div>}
+      {access.error && <ErrorNotice error={access.error} what="your policies" />}
+      {access.data && list.length === 0 && (
         <div className="card">
           Your organisation has no active data-share policy, so it cannot request consent yet.
         </div>
       )}
 
-      {bindings.data && list.length > 0 && (
+      {access.data && list.length > 0 && (
         <form onSubmit={onSubmit}>
           <div className="card">
             <h3 className="card-title">Subject</h3>

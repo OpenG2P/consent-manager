@@ -52,11 +52,14 @@ class ConsentRequest(BaseORMModelWithId):
     # The single controller for a legacy request; NULL when the request carries
     # several ``grants`` (one per controller).
     controller_id: Mapped[Optional[str]] = mapped_column(String(255), index=True, nullable=True)
+    # The partner the consent is asked for: its audience (e.g. bank-a); the
+    # partner itself and its policies live in Partner Management.
     partner_id: Mapped[str] = mapped_column(String, index=True)
     purpose: Mapped[dict] = mapped_column(JSONB)
     # Union of all requested scopes (for a grants request too).
     requested_scopes: Mapped[list] = mapped_column(JSONB, default=list)
-    # Requested grants: [{"data_controller", "data_scopes", "partner_binding_id"}].
+    # Requested grants: [{"data_controller", "data_scopes", "policy_version"}]
+    # (the version of the partner's policy the request was checked against).
     # NULL for a legacy single-controller request.
     grants: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
     valid_from: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -67,8 +70,10 @@ class ConsentRequest(BaseORMModelWithId):
 
     # ── Partner portal (consent scenario 1); NULL for other requests ──
     method: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
-    # Display label of the use case the request was made for (e.g.
-    # loan-profile@1); the grants are still what is asked for.
+    # The use case the request was made for (e.g. loan-profile@1). Exchange
+    # role: the request is made BY use case (its grants and purpose come from
+    # the Composite's use case). Otherwise a display label; the grants are what
+    # is asked for.
     use_case: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     # The partner user (preferred_username in the partner realm) and partner.
     created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -165,6 +170,7 @@ class ConsentArtefact(BaseORMModelWithId):
     # Other identifiers of the subject (from its request), e.g. the Farmer ID.
     subject_identifiers: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
     controller_id: Mapped[Optional[str]] = mapped_column(String(255), index=True, nullable=True)
+    # The partner the consent was given to: its audience (e.g. bank-a).
     partner_id: Mapped[str] = mapped_column(String, index=True)
 
     purpose: Mapped[dict] = mapped_column(JSONB)
@@ -176,6 +182,7 @@ class ConsentArtefact(BaseORMModelWithId):
     valid_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
     source: Mapped[str] = mapped_column(String(20), default=ArtefactSource.embedded.value)
+    # Version of the partner's policy in Partner Management the decision used.
     policy_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     auth_context_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
@@ -185,7 +192,7 @@ class ConsentArtefact(BaseORMModelWithId):
     # its own decision.
     object_jti: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     # Originated grants consent: [{"data_controller", "data_scopes",
-    # "effective_data_scopes", "partner_binding_id", "policy_version"}].
+    # "granted_scopes", "effective_data_scopes", "policy_version"}].
     grants: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
     # Originated consent: how the subject confirmed, e.g. {"method": "assisted",
     # "evidence": ["signed_form"], "verified_by", "verified_at",
@@ -193,6 +200,9 @@ class ConsentArtefact(BaseORMModelWithId):
     assurance: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     # The consent request it was originated from (NULL for embedded/receipt).
     consent_request_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    # Exchange role: the use case (name@major) the consent was made for. It is
+    # presentable only for that use case. NULL for every other consent.
+    use_case: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     status: Mapped[str] = mapped_column(String(20), default=ArtefactStatus.active.value, index=True)
     revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

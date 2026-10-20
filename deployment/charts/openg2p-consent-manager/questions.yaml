@@ -11,6 +11,11 @@ questions:
   type: string
   label: Consent Manager Hostname
   group: General
+- variable: global.partnerManagementUiUrl
+  description: Link to Partner Management's staff UI, shown in the console. Partners, their keys and their policies are managed there. Empty = no link.
+  type: string
+  label: Partner Management UI URL
+  group: General
 - variable: consentManagerApi.openapiRootPath
   description: Path prefix the API is served under (behind the ingress/VirtualService)
   type: string
@@ -53,7 +58,7 @@ questions:
   group: Authentication
   show_if: global.consentManagerAuthEnabled=true
 - variable: global.consentManagerAdminRole
-  description: Role required to call the partner/policy admin endpoints
+  description: Role required to call the admin endpoints
   type: string
   default: CONSENT_MANAGER_ADMIN
   label: Admin Role
@@ -161,7 +166,7 @@ questions:
   label: Run Sanity Tests (gates the deploy)
   group: Sanity
 - variable: sanity.runE2e
-  description: "Run the full end-to-end /validate round-trip too (on by default). It is the ONLY part that creates data — onboards a TEST_SANITY partner (then suspends it) and needs a Keycloak token at deploy time. Turn OFF for production where you don't want test data; smoke + contract still run and gate."
+  description: "Run the full end-to-end /validate round-trip too (on by default). It is the ONLY part that creates data — keeps a test partner (PARTNER_CM_SANITY), its key and its policy in Partner Management and needs a Keycloak token at deploy time. Turn OFF for production where you don't want test data; smoke + contract still run and gate."
   type: boolean
   default: true
   label: Run Full E2E (creates a test partner)
@@ -172,7 +177,7 @@ questions:
 # Off by default: a standalone install leaves this alone. Pick a role and the
 # defaults are the reference values (Agri Stack's); fill the fields only to differ.
 - variable: global.agriStackExchange.role
-  description: "Consent tokens between Consent Managers, for a data exchange (e.g. Agri Stack) whose composites read several registries. exchange = this CM issues a consent token per registry to the Composite (the Exchange install); department = this CM accepts the Exchange CM's tokens (a registry's install); none = neither."
+  description: "Role of this Consent Manager in a data exchange (e.g. Agri Stack), where a Composite reads several registries. exchange: choose on the Exchange's install; this CM issues the Composite a consent token per registry. department: choose on each registry's install (e.g. a department's Farmer Registry); this CM accepts consent tokens from the Exchange CM. none: not part of a data exchange."
   type: enum
   options: [none, exchange, department]
   default: none
@@ -186,7 +191,7 @@ questions:
   group: Exchange
   show_if: global.agriStackExchange.role=exchange
 - variable: global.agriStackExchange.receiptPresenters
-  description: "Comma-separated partner IDs allowed to ask for tokens. Empty = agri-composite."
+  description: "Comma-separated partner IDs of the Composite(s) that may ask this CM for consent tokens, not the partners (e.g. banks) they serve. Empty = agri-composite."
   type: string
   default: ""
   label: Token Presenters
@@ -197,6 +202,13 @@ questions:
   type: int
   default: 900
   label: Token Lifetime (seconds)
+  group: Exchange
+  show_if: global.agriStackExchange.role=exchange
+- variable: global.agriStackExchange.compositeApiUrl
+  description: "The Composite's API URL (in-cluster). Partner-portal and lifecycle consents here are made for a use case granted to the partner in Partner Management; the use case's purpose and scopes per registry are read from it. Empty = http://agri-composite-api (the Composite in this namespace)."
+  type: string
+  default: ""
+  label: Composite API URL
   group: Exchange
   show_if: global.agriStackExchange.role=exchange
 - variable: global.agriStackExchange.exchangeDomain
@@ -214,7 +226,7 @@ questions:
   group: Exchange
   show_if: global.agriStackExchange.role=department
 - variable: global.agriStackExchange.trustedIssuer.presenter
-  description: "The only partner allowed to present its tokens here. Empty = agri-composite. Bind it at this CM with a policy per registry (setup_exchange.py does it)."
+  description: "The partner ID of the Composite: the only caller that may present the Exchange's consent tokens here. Empty = agri-composite. Partners that call this registry directly, with a consent of their own, are not affected. Its scope policy per registry is in this install's Partner Management (setup_exchange.py raises and approves it)."
   type: string
   default: ""
   label: Trusted Token Presenter
@@ -241,7 +253,7 @@ questions:
 # partner portal SPA, provisions the Keycloak `partner` realm + client, gives
 # the staff api the partner-realm token settings and turns on evidence storage.
 - variable: partnerPortal.enabled
-  description: "Deploy the partner portal (consent collected in person by partner users, e.g. bank staff) with evidence storage. Creates the Keycloak realm `partner` and the consent-partner-portal client. After install, run deployment/scripts/setup-partner-realm.sh once (realm roles, partner_id attribute and mapper, partner users)."
+  description: "Turn on where partners' staff collect consent in this Consent Manager: in person, with the subject's national-ID login and signed form, checked by CM staff (e.g. on the Exchange's install). A registry's own install does not need it today: partners that call the registry directly present a consent they collected and signed themselves. Creates the Keycloak realm `partner`; after install, run deployment/scripts/setup-partner-realm.sh once for its roles and partner users. Also turns on evidence storage."
   type: boolean
   default: false
   label: Partner Portal

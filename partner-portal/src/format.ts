@@ -93,3 +93,17 @@ export function openBlobIn(win: Window | null, blob: Blob): void {
   else window.open(url, "_blank");
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
+
+// A date input (yyyy-mm-dd) as an ISO timestamp at the start / end of that local day.
+export function dayStart(d: string): string {
+  return new Date(`${d}T00:00:00`).toISOString();
+}
+export function dayEnd(d: string): string {
+  return new Date(`${d}T23:59:59`).toISOString();
+}
+// Today as yyyy-mm-dd (local).
+export function today(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}

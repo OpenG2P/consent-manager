@@ -5,18 +5,10 @@
 import { getConfig, getToken, refreshToken } from "../auth";
 import type {
   Artefact,
-  AweTask,
   ConsentRequest,
   DecisionLog,
   Grant,
-  PagedTasks,
   Paginated,
-  Partner,
-  PartnerCreate,
-  PartnerPolicy,
-  PartnerUpdate,
-  PolicyMeta,
-  PolicyUpsert,
   OffsetPage,
   RevokeResponse,
   VerificationRequest,
@@ -80,35 +72,8 @@ async function requestBlob(path: string): Promise<Blob> {
 const V1 = "/consent/v1";
 
 export const api = {
-  // Allowed values for the binding/policy forms (staff).
-  getMeta: () => request<PolicyMeta>(`${V1}/meta`),
-
-  // ── Partners (admin) ───────────────────────────────────────────────
-  // `audience` narrows to one partner's bindings (one per controller).
-  listPartners: (params: { audience?: string } = {}) => {
-    const q = new URLSearchParams();
-    if (params.audience) q.set("audience", params.audience);
-    const qs = q.toString();
-    return request<Partner[]>(`${V1}/partners${qs ? `?${qs}` : ""}`);
-  },
-  getPartner: (id: string) => request<Partner>(`${V1}/partners/${id}`),
-  createPartner: (data: PartnerCreate) =>
-    request<Partner>(`${V1}/partners`, { method: "POST", body: JSON.stringify(data) }),
-  updatePartner: (id: string, data: PartnerUpdate) =>
-    request<Partner>(`${V1}/partners/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
-
-  // Policy (versioned). putPolicy returns the new version — `pending` if it
-  // widened access and AWE approval is enabled, else `active`.
-  getPolicy: (id: string) => request<PartnerPolicy>(`${V1}/partners/${id}/policy`),
-  listPolicies: (id: string) => request<PartnerPolicy[]>(`${V1}/partners/${id}/policies`),
-  putPolicy: (id: string, data: PolicyUpsert) =>
-    request<PartnerPolicy>(`${V1}/partners/${id}/policy`, { method: "PUT", body: JSON.stringify(data) }),
-  // Copy a failed / stale / rejected version into a new version and save it
-  // again (re-evaluated against the current active policy).
-  resubmitPolicy: (id: string, version: number) =>
-    request<PartnerPolicy>(`${V1}/partners/${id}/policies/${version}/resubmit`, { method: "POST" }),
-
   // ── Decisions (admin status/audit view) ────────────────────────────
+  // `partner_id` is the partner's audience (e.g. bank-a).
   listDecisions: (params: { partner_id?: string; decision?: string; limit?: number } = {}) => {
     const q = new URLSearchParams();
     if (params.partner_id) q.set("partner_id", params.partner_id);
@@ -116,24 +81,6 @@ export const api = {
     q.set("limit", String(params.limit ?? 50));
     return request<DecisionLog[]>(`${V1}/decisions?${q.toString()}`);
   },
-
-  // ── AWE approvals (approver inbox — proxied to AWE with the approver JWT) ──
-  // status "actionable" (default) = open or claimed tasks.
-  listMyTasks: (params: { status?: string; page?: number; page_size?: number } = {}) => {
-    const q = new URLSearchParams();
-    q.set("status", params.status ?? "actionable");
-    q.set("page", String(params.page ?? 1));
-    q.set("page_size", String(params.page_size ?? 25));
-    return request<PagedTasks>(`${V1}/awe/tasks?${q.toString()}`);
-  },
-  submitTaskDecision: (taskId: string, action: "approve" | "reject" | "abstain", comment?: string) =>
-    request<unknown>(`${V1}/awe/tasks/${taskId}/decision`, {
-      method: "POST",
-      body: JSON.stringify({ action, comment: comment ?? null }),
-    }),
-  claimTask: (taskId: string) =>
-    request<AweTask>(`${V1}/awe/tasks/${taskId}/claim`, { method: "POST" }),
-  getAweRequest: (requestId: string) => request<unknown>(`${V1}/awe/requests/${requestId}`),
 
   // ── Subject rights (transparency dashboard) ────────────────────────
   myConsents: (status?: string) =>

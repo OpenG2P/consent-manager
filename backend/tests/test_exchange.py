@@ -73,22 +73,24 @@ def post(call, payload):
 
 
 @pytest.fixture
-def bank(call, new_partner):
-    """A partner bound at the exchange to FR and CSR (full scopes)."""
+def bank(pm, new_partner):
+    """A partner with scope policies for FR and CSR (full scopes) in the
+    exchange's Partner Management."""
     p = new_partner()
-    bind(call, p, FR, FR_SCOPES)
-    bind(call, p, CSR, CSR_SCOPES)
+    bind(pm, p, FR, FR_SCOPES)
+    bind(pm, p, CSR, CSR_SCOPES)
     return p
 
 
 @pytest.fixture(scope="session")
-def presenter_binding(env, call):
-    """The department's standing policy for the exchange presenter at FR: only
+def presenter_binding(env, pm_store):
+    """The department's standing ceiling for the exchange presenter at FR: its
+    scope policy in the department's Partner Management — only
     farmer_personal_details (narrower than the exchange grant)."""
     from conftest import Partner
 
     presenter = Partner(env, audience=PRESENTER)
-    bind(call, presenter, FR, ["farmer_personal_details"])
+    bind(pm_store, presenter, FR, ["farmer_personal_details"])
     return presenter
 
 
@@ -182,10 +184,10 @@ def test_issue_receipts_refused_when_not_configured(call, cfg, bank):
     assert "not enabled" in body["detail"]
 
 
-def test_deny_issues_no_receipts(call, cfg, new_partner):
+def test_deny_issues_no_receipts(call, cfg, pm, new_partner):
     exchange_on(cfg)
     p = new_partner()
-    bind(call, p, FR, FR_SCOPES)  # not bound to CSR
+    bind(pm, p, FR, FR_SCOPES)  # no CSR policy
     body = post(call, {"consent_jws": p.sign(p.claims(grants=GRANTS)),
                        "partner_id": PRESENTER, "issue_receipts": True})
     assert body["decision"] == "deny"

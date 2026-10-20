@@ -14,7 +14,7 @@ from ..schemas.portal import (
     AssistedRequestList,
     AssistedRequestResponse,
     EvidenceResponse,
-    PartnerBindingView,
+    PartnerAccessView,
     PartnerConsentList,
     PartnerConsentResponse,
     PartnerMe,
@@ -31,6 +31,7 @@ from ..services import (
     LifecycleError,
     SubjectAuthService,
 )
+from ..services.composite_client import consent_by_use_case
 from .assisted_views import (
     consent_view,
     error,
@@ -66,7 +67,7 @@ class PartnerPortalController(BaseController):
             )
 
         route("/me", self.me, "GET", PartnerMe)
-        route("/bindings", self.bindings, "GET", list[PartnerBindingView])
+        route("/access", self.access, "GET", PartnerAccessView)
         route("/consent-requests", self.create_request, "POST", AssistedRequestResponse, 201)
         route("/consent-requests", self.list_requests, "GET", AssistedRequestList)
         route("/consent-requests/{request_id}", self.get_request, "GET", AssistedRequestDetail)
@@ -125,8 +126,15 @@ class PartnerPortalController(BaseController):
             roles=user.roles,
         )
 
-    async def bindings(self, user: PartnerUser = Depends(current_partner_user)):
-        return [PartnerBindingView(**b) for b in await self.assisted.bindings(user.partner_id)]
+    async def access(self, user: PartnerUser = Depends(current_partner_user)):
+        """What the partner may ask for: at the Exchange, the use cases its
+        use-case policy in Partner Management grants (purpose and scopes per
+        registry from the Composite); elsewhere its scope policies."""
+        try:
+            view = await self.assisted.access(user.partner_id)
+        except LifecycleError as exc:
+            return error(exc.status_code, exc.detail)
+        return PartnerAccessView(**view)
 
     async def create_request(
         self, data: AssistedRequestCreate, user: PartnerUser = Depends(current_partner_user),
@@ -245,6 +253,7 @@ class PartnerPortalController(BaseController):
         self, user: PartnerUser = Depends(current_partner_user)
     ) -> RequestSettings:
         return RequestSettings(
+            consent_by="use_case" if consent_by_use_case() else "scopes",
             required_subject_identifiers=_config.subject_required_identifiers,
             subject_auth=await self.subject_auth_config(user),
         )

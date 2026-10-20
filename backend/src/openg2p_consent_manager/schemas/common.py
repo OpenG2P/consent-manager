@@ -42,6 +42,13 @@ class ReasonCode(str, Enum):
     not_yet_valid = "not_yet_valid"
     # consent_partner_id is not the partner the consent was given to.
     partner_mismatch = "partner_mismatch"
+    # ── Partner policies (Partner Management) ──
+    # Partner Management could not be reached and no policy answer is cached
+    # (fail closed; retry later).
+    policy_unavailable = "policy_unavailable"
+    # Use-case mode: request_context.use_case is not in the partner's use-case
+    # policy (allowed_use_cases), or the partner has no use-case policy.
+    use_case_not_granted = "use_case_not_granted"
 
 
 class SubjectId(BaseModel):

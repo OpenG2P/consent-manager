@@ -8,22 +8,46 @@ from .verification import ConsentGrant
 
 
 class ConsentRequestCreate(BaseModel):
-    """An originated consent request. Either ``requested_scopes`` (one
-    controller: the binding ``partner_id``'s) or ``grants`` (several controllers;
-    ``partner_id`` is any binding of the partner, and each grant is checked
-    against the partner's binding + policy for that controller)."""
+    """An originated consent request for the partner ``partner_id`` (its
+    audience, e.g. bank-a). Either ``data_controller`` + ``requested_scopes``
+    (one controller) or ``grants`` (several controllers). Each is checked
+    against the partner's policy for that controller in Partner Management.
+
+    Exchange role: ``use_case`` (``name@major``) instead — the request is made
+    for that use case, granted to the partner by its use-case policy in
+    Partner Management; the grants and purpose are the Composite's use case
+    (``purpose``, if given, must be the use case's)."""
 
     subject_id: SubjectId
-    partner_id: str
-    purpose: Dict[str, Any]
+    partner_id: str = Field(..., min_length=1, examples=["bank-a"])
+    purpose: Optional[Dict[str, Any]] = None
+    data_controller: Optional[str] = Field(None, min_length=1)
     requested_scopes: Optional[List[str]] = Field(None, min_length=1)
     grants: Optional[List[ConsentGrant]] = Field(None, min_length=1)
     validity: Optional[Dict[str, datetime]] = None  # {valid_from, valid_until}
+    use_case: Optional[str] = Field(None, max_length=255, examples=["loan-profile@1"])
 
     @model_validator(mode="after")
     def _one_shape(self):
+        if self.use_case is not None:
+            if (
+                self.grants is not None
+                or self.requested_scopes is not None
+                or self.data_controller is not None
+            ):
+                raise ValueError(
+                    "at the Exchange, consents are made for a use case: leave out "
+                    "'grants', 'data_controller' and 'requested_scopes'"
+                )
+            return self
+        if self.purpose is None:
+            raise ValueError("'purpose' is required")
         if (self.requested_scopes is None) == (self.grants is None):
             raise ValueError("give exactly one of 'requested_scopes' or 'grants'")
+        if self.requested_scopes is not None and not self.data_controller:
+            raise ValueError("'requested_scopes' needs 'data_controller'")
+        if self.grants is not None and self.data_controller is not None:
+            raise ValueError("'data_controller' goes in each grant, not beside 'grants'")
         if self.grants is not None:
             controllers = [g.data_controller for g in self.grants]
             if len(controllers) != len(set(controllers)):
@@ -44,6 +68,7 @@ class ConsentRequestResponse(BaseModel):
     purpose: Dict[str, Any]
     requested_scopes: List[str]
     grants: Optional[List[Dict[str, Any]]] = None
+    use_case: Optional[str] = None
     status: str
     valid_from: Optional[datetime] = None
     valid_until: Optional[datetime] = None
@@ -93,6 +118,8 @@ class ArtefactResponse(BaseModel):
     # How the subject confirmed (originated consents), and its request.
     assurance: Optional[Dict[str, Any]] = None
     consent_request_id: Optional[str] = None
+    # Exchange role: the use case the consent was made for (presentable only for it).
+    use_case: Optional[str] = None
     status: str
     source: str
     valid_from: datetime

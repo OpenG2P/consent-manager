@@ -147,11 +147,12 @@ def raw(env):
 
 
 @pytest.fixture
-def bank(call, new_partner):
-    """A partner bound to FR (personal details only) and CSR."""
+def bank(pm, new_partner):
+    """A partner with policies in Partner Management for FR (personal details
+    only) and CSR."""
     p = new_partner()
-    p.fr_binding = bind(call, p, FR, ["farmer_personal_details"])
-    p.csr_binding = bind(call, p, CSR, CSR_SCOPES)
+    bind(pm, p, FR, ["farmer_personal_details"])
+    bind(pm, p, CSR, CSR_SCOPES)
     return p
 
 
@@ -223,19 +224,28 @@ def test_partner_token_checks(call, portal, realm_key, bank):
     assert me(token(realm_key, bank.audience, roles=["PARTNER_ADMIN"])) == 200
 
 
-def test_me_and_bindings(portal, as_partner, bank):
+def test_me_and_access(portal, as_partner, bank):
     pc = as_partner(bank.audience, username="op1", name="Op One")
     status, me = pc("GET", "/me")
     assert status == 200
     assert me == {"username": "op1", "name": "Op One", "partner_id": bank.audience,
                   "roles": ["PARTNER_OPERATOR"]}
-    status, bindings = pc("GET", "/bindings")
+    status, access = pc("GET", "/access")
     assert status == 200
-    by = {b["data_controller"]: b for b in bindings}
+    assert access["consent_by"] == "scopes" and access["use_cases"] == []
+    by = {b["data_controller"]: b for b in access["scope_policies"]}
     assert set(by) == {FR, CSR}
     assert by[FR]["allowed_data_scopes"] == ["farmer_personal_details"]
     assert by[CSR]["allowed_purposes"] == ["credit-assessment"]
     assert by[CSR]["allowed_subject_id_types"] == ["FAYDA_FAN"]
+    assert by[FR]["policy_version"] == 1
+
+
+def test_access_when_partner_management_is_down(portal, as_partner, pm, new_partner):
+    p = new_partner()
+    pm.down = True
+    status, body = as_partner(p.audience)("GET", "/access")
+    assert status == 503 and "Partner Management" in body["error"]
 
 
 # ── requests ─────────────────────────────────────────────────────────────────
@@ -259,7 +269,7 @@ def test_create_request(portal, as_partner, bank):
 
 @pytest.mark.parametrize("change, fragment", [
     ({"grants": [{"data_controller": FR, "data_scopes": FR_SCOPES}]}, "scope_exceeds_policy"),
-    ({"grants": [{"data_controller": "nsr", "data_scopes": ["x"]}]}, "not bound"),
+    ({"grants": [{"data_controller": "nsr", "data_scopes": ["x"]}]}, "no active policy"),
     ({"purpose": {"code": "marketing"}}, "purpose_not_allowed"),
     ({"subject_id": {"type": "PHONE", "value": "1"}}, "subject_not_allowed"),
     ({"validity": {"valid_until": (datetime.now(timezone.utc) + timedelta(days=800)).isoformat()}},
@@ -272,11 +282,9 @@ def test_create_request_policy_checks(portal, as_partner, bank, change, fragment
     assert fragment in body["error"]
 
 
-def test_create_request_needs_a_policy(call, portal, as_partner, new_partner):
+def test_create_request_needs_a_policy(call, portal, as_partner, pm, new_partner):
     p = new_partner()
-    status, _ = call("POST", "/consent/v1/partners", json={
-        "audience": p.audience, "controller_id": FR, "partner_mgmt_id": p.pm_id})
-    assert status == 201
+    bind(pm, p, CSR, CSR_SCOPES)  # a policy for another registry only
     status, body = as_partner(p.audience)("POST", "/consent-requests", json=request_body(
         grants=[{"data_controller": FR, "data_scopes": ["farmer_personal_details"]}]))
     assert status == 422 and "no active policy" in body["error"]
@@ -438,21 +446,37 @@ def test_staff_approve_creates_consent(call, portal, as_partner, bank, upload, r
     assert pc("GET", "/consents", params={"status": "revoked"})[1]["total"] == 0
 
 
-def test_staff_approve_narrows_to_current_policy(call, portal, as_partner, bank, upload):
+def test_staff_approve_narrows_to_current_policy(call, run, portal, as_partner, pm, bank, upload):
     pc = as_partner(bank.audience)
     req = submitted(pc, upload)
-    # CSR policy narrowed after the request was made.
-    status, _ = call("PUT", f"/consent/v1/partners/{bank.csr_binding}/policy", json={
-        "allowed_data_scopes": ["crop_season"], "allowed_purposes": ["credit-assessment"],
-        "allowed_subject_id_types": ["FAYDA_FAN"], "allowed_signing_algs": ["EdDSA"],
-        "max_validity_duration": "P1Y",
-    })
-    assert status == 200
+    # CSR policy narrowed in Partner Management after the request was made.
+    assert bind(pm, bank, CSR, ["crop_season"]) == 2
     status, done = call("POST", f"{STAFF}/{req['id']}/approve", json={})
     assert status == 200, done
     consent = pc("GET", f"/consents/{done['consent_id']}")[1]
     grants = {g["data_controller"]: g["effective_data_scopes"] for g in consent["grants"]}
     assert grants == {FR: ["farmer_personal_details"], CSR: ["crop_season"]}
+
+    from openg2p_consent_manager.db import async_session
+    from openg2p_consent_manager.models import ConsentArtefact
+
+    async def artefact():
+        async with async_session()() as s:
+            return await s.get(ConsentArtefact, done["consent_id"])
+
+    art = run(artefact())
+    assert art.partner_id == bank.audience
+    assert {g["data_controller"]: g["policy_version"] for g in art.grants} == {FR: 1, CSR: 2}
+
+
+def test_staff_approve_when_partner_management_is_down(call, portal, as_partner, pm, bank,
+                                                       upload):
+    pc = as_partner(bank.audience)
+    req = submitted(pc, upload)
+    pm.client.invalidate()  # nothing cached
+    pm.down = True
+    status, body = call("POST", f"{STAFF}/{req['id']}/approve", json={})
+    assert status == 503, body
 
 
 def test_staff_reject(call, portal, as_partner, bank, upload):
@@ -554,7 +578,7 @@ def test_validate_consent_id_denials(call, portal, as_partner, bank, upload, run
                     consent_partner_id=bank.audience)["reason_code"] == "unknown_consent"
 
 
-def test_validate_consent_id_scopes(call, portal, as_partner, bank, upload):
+def test_validate_consent_id_scopes(call, portal, as_partner, pm, bank, upload):
     pc = as_partner(bank.audience)
     consent_id = approved_consent(call, pc, upload)
     ok = {"consent_id": consent_id, "consent_partner_id": bank.audience}
@@ -565,11 +589,7 @@ def test_validate_consent_id_scopes(call, portal, as_partner, bank, upload):
         "reason_code"] == "scope_exceeds_policy"
 
     # The partner's CURRENT policy narrows a stored consent.
-    status, _ = call("PUT", f"/consent/v1/partners/{bank.csr_binding}/policy", json={
-        "allowed_data_scopes": ["farmer_reference"], "allowed_purposes": ["credit-assessment"],
-        "allowed_subject_id_types": ["FAYDA_FAN"], "allowed_signing_algs": ["EdDSA"],
-    })
-    assert status == 200
+    bind(pm, bank, CSR, ["farmer_reference"])
     body = validate(call, **ok)
     assert body["grants"] == {FR: ["farmer_personal_details"]}
     assert body["data_controller"] == FR
@@ -583,10 +603,12 @@ def _claims(receipt):
 
 
 def test_validate_consent_id_issues_receipts(call, portal, as_partner, bank, upload):
-    portal.config.receipt_issuer = "agri-stack-exchange-cm"
-    portal.config.receipt_presenters = [PRESENTER]
+    # A scope-policy consent, made before the exchange role is on (at the
+    # Exchange consents are made by use case).
     pc = as_partner(bank.audience)
     consent_id = approved_consent(call, pc, upload)
+    portal.config.receipt_issuer = "agri-stack-exchange-cm"
+    portal.config.receipt_presenters = [PRESENTER]
     consent = pc("GET", f"/consents/{consent_id}")[1]
 
     body = validate(call, consent_id=consent_id, consent_partner_id=bank.audience,

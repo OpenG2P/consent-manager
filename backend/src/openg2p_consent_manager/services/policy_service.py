@@ -35,12 +35,45 @@ class PolicyService(BaseService):
     this covers the policy/scope/validity ceiling.
     """
 
+    def check_use_case(self, policy, request_context, purpose_code) -> Optional[PolicyResult]:
+        """Use-case mode gate: the partner's use-case policy must grant
+        ``request_context.use_case``, and the consent's purpose must be the one
+        the use case serves (``request_context.purpose``, when given). None if
+        both hold."""
+        version = policy.version
+        use_case = request_context.use_case
+        if use_case not in (policy.allowed_use_cases or []):
+            return PolicyResult(
+                False, ReasonCode.use_case_not_granted,
+                f"use case '{use_case}' is not granted to the partner in Partner Management",
+                policy_version=version,
+            )
+        # The use case's scopes are the only ceiling in this mode: without them
+        # the whole consent would pass.
+        if not request_context.requested_scopes:
+            return PolicyResult(
+                False, ReasonCode.scope_exceeds_policy,
+                "use-case mode needs request_context.requested_scopes (the use case's scopes)",
+                policy_version=version,
+            )
+        if request_context.purpose and purpose_code != request_context.purpose:
+            return PolicyResult(
+                False, ReasonCode.purpose_not_allowed,
+                f"consent purpose '{purpose_code}' is not the use case's purpose "
+                f"'{request_context.purpose}'",
+                policy_version=version,
+            )
+        return None
+
     def evaluate(
         self, consent_object, material, request_context, grant=None
     ) -> PolicyResult:
-        """Evaluate one grant of ``consent_object`` against the binding in
-        ``material`` (the partner's binding + active policy for that grant's
-        controller). ``grant`` defaults to the consent's legacy single grant."""
+        """Evaluate one grant of ``consent_object`` against the partner's policy
+        in ``material`` (from Partner Management): its scope policy for that
+        grant's controller or, in use-case mode, its use-case policy (no
+        controller; the scope ceiling is then the consent itself ∩ the
+        requested scopes). ``grant`` defaults to the consent's legacy single
+        grant."""
         if grant is None:
             grant = consent_object.grant_for(consent_object.data_controller or "")
         policy = material.get("policy")
@@ -50,20 +83,22 @@ class PolicyService(BaseService):
         version = policy.version
         now = datetime.now(timezone.utc)
         partner = material["partner"]
+        use_case_policy = getattr(policy, "is_use_case", False)
 
         # 4. Audience — the object must name this partner (aud) and the grant
-        #    must be for the controller this binding (and policy) belongs to. One
-        #    shared CM serves many controllers; a partner has one binding (and
-        #    policy) per controller.
+        #    must be for the controller the policy is for. One shared CM serves
+        #    many controllers; a partner has one scope policy per controller.
         if consent_object.aud != partner.audience:
             return PolicyResult(
                 False, ReasonCode.audience_mismatch,
                 "aud does not match the partner", policy_version=version,
             )
-        if grant is None or grant.data_controller != partner.controller_id:
+        if grant is None or (
+            not use_case_policy and grant.data_controller != partner.controller_id
+        ):
             return PolicyResult(
                 False, ReasonCode.audience_mismatch,
-                "data_controller does not match the partner's binding",
+                "data_controller does not match the partner's policy",
                 policy_version=version,
             )
 
@@ -87,9 +122,10 @@ class PolicyService(BaseService):
             )
 
         # 7. Scope — granted (for this controller) ∩ policy (for this
-        #    controller) ∩ requested. Never widen.
+        #    controller) ∩ requested. Never widen. A use-case policy has no
+        #    scopes: the requested scopes (the use case's) are the ceiling.
         consented = set(grant.data_scopes or [])
-        allowed = set(policy.allowed_data_scopes or [])
+        allowed = consented if use_case_policy else set(policy.allowed_data_scopes or [])
         effective = consented & allowed
         requested = (
             set(request_context.requested_scopes)

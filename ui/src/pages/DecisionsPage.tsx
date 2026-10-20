@@ -55,7 +55,7 @@ export default function DecisionsPage() {
                   {d.detail && <div className="muted" style={{ fontSize: 12 }}>{d.detail}</div>}
                 </td>
                 <td className="muted">
-                  {d.partner_id ? <code className="mono">{d.partner_id.slice(0, 8)}…</code> : "—"}
+                  {d.partner_id ? <code className="mono">{d.partner_id}</code> : "—"}
                 </td>
                 <td className="muted">
                   {d.data_controller ? <code className="mono">{d.data_controller}</code> : "—"}

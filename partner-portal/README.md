@@ -8,7 +8,9 @@ in person (consent scenario 1, "assisted") and use it:
   Consent Manager staff, cancel; follow each request's progress.
 - **Consents** — the consents the partner obtained: data granted per registry, validity, how the
   subject consented (assurance), and the signed receipt (download as JSON).
-- **What we can ask for** — the partner's active data-share policies per registry (read-only).
+- **What we can ask for** (`/access`) — the partner's active data-share policies per registry
+  (read-only); at the Exchange, the use cases granted to the partner, with their purpose and data
+  per registry. There a new request names one of those use cases instead of registries and data.
 - **Use cases** — when a use-case composite is configured: its published use cases and the consent
   each needs; "New request from this use case" prefills the request form.
 

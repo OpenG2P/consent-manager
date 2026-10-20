@@ -4,13 +4,13 @@
 // not set up as a partner user, handled by the layout).
 import { getConfig, getToken, login, refreshToken } from "../auth";
 import type {
-  Binding,
   Consent,
   ConsentRequest,
   ConsentRequestCreate,
   Evidence,
   Me,
   Page,
+  PartnerAccess,
   RequestSettings,
   SubjectAuth,
   SubjectAuthConfig,
@@ -108,7 +108,7 @@ export interface ListParams {
 
 export const api = {
   me: () => request<Me>(`${P}/me`),
-  bindings: () => request<Binding[]>(`${P}/bindings`),
+  access: () => request<PartnerAccess>(`${P}/access`),
 
   // ── Consent requests ───────────────────────────────────────────────
   listRequests: (p: ListParams = {}) =>

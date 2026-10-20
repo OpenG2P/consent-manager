@@ -63,6 +63,12 @@ trial.openg2p.org. Root context.
 - name: CONSENT_MANAGER_RECEIPT_TTL_SECONDS
   value: {{ $x.receiptTtlSeconds | default 900 | quote }}
 {{- end }}
+{{- $composite := tpl ($x.compositeApiUrl | default "") . -}}
+{{- if and (not $composite) (eq $role "exchange") }}{{ $composite = $x.defaultCompositeApiUrl }}{{ end -}}
+{{- if $composite }}
+- name: CONSENT_MANAGER_COMPOSITE_API_URL
+  value: {{ $composite | quote }}
+{{- end }}
 {{- if $issuers }}
 - name: CONSENT_MANAGER_TRUSTED_RECEIPT_ISSUERS
   value: {{ toJson $issuers | quote }}
@@ -175,8 +181,9 @@ dedicated partner_manager client is configured.
 {{- end -}}
 
 {{/*
-Partner Management seed env — shared by the pm-seed Job (deploy-time seeding)
-and the sanity Job (its idempotent safety-net check). The signing private key
+Partner Management seed env — shared by the pm-seed Job (deploy-time seeding
+of the sanity partner, its key and its policy) and the sanity Job (its
+idempotent safety-net check). The signing private key
 is bundled in the sanity image (TEST only); PM stores the derived public half.
 */}}
 {{- define "consentManagerSanity.pmSeedEnv" -}}
@@ -186,6 +193,9 @@ is bundled in the sanity image (TEST only); PM stores the derived public half.
   value: {{ tpl .Values.global.partnerManagementApiUrl $ | quote }}
 - name: SANITY_PM_ADMIN_URL
   value: {{ tpl .Values.global.partnerManagementAdminApiUrl $ | quote }}
+# The sanity partner's PM policy is for this data controller.
+- name: SANITY_CONTROLLER_ID
+  value: {{ .Values.sanity.controllerId | quote }}
 # Authenticate to PM's admin API AS PM's own admin client (holds partner_manager).
 - name: SANITY_PM_ADMIN_TOKEN_URL
   value: "{{ tpl .Values.global.keycloakIssuerUrl $ }}/protocol/openid-connect/token"
@@ -199,26 +209,3 @@ is bundled in the sanity image (TEST only); PM stores the derived public half.
       optional: true
 {{- end -}}
 
-{{/*
-URL AWE posts policy-change decisions to (root context). global.aweCallbackUrl
-if set; else the STAFF api's in-cluster Service — named exactly as
-templates/api/service.yaml names it, so it follows consentManagerApi.nameOverride
-(e.g. `cm-api` under commons-services).
-*/}}
-{{- define "consentManager.aweCallbackUrl" -}}
-{{- if .Values.global.aweCallbackUrl -}}
-{{- tpl .Values.global.aweCallbackUrl . -}}
-{{- else -}}
-{{- $staff := dict "Values" (merge (deepCopy .Values.consentManagerApi) (dict "global" .Values.global)) "Chart" .Chart "Release" .Release -}}
-{{- $port := int (default 80 .Values.consentManagerApi.service.port) -}}
-http://{{ include "common.names.fullname" $staff }}{{ if ne $port 80 }}:{{ $port }}{{ end }}/consent/v1/awe/webhooks/decision
-{{- end -}}
-{{- end -}}
-
-{{/*
-Whether a hook-annotations map still marks a Helm hook (an umbrella chart may
-null the keys out to run the resource as a plain one). Returns "true" or "".
-*/}}
-{{- define "consentManager.isHook" -}}
-{{- if and . (index . "helm.sh/hook") -}}true{{- end -}}
-{{- end -}}

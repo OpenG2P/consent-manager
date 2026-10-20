@@ -6,8 +6,8 @@ export function useMe() {
   return useQuery({ queryKey: ["me"], queryFn: api.me, staleTime: 5 * 60_000 });
 }
 
-export function useBindings() {
-  return useQuery({ queryKey: ["bindings"], queryFn: api.bindings, staleTime: 60_000 });
+export function useAccess() {
+  return useQuery({ queryKey: ["access"], queryFn: api.access, staleTime: 60_000 });
 }
 
 export function useSubjectAuthConfig() {

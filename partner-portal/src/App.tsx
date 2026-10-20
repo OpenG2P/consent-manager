@@ -6,7 +6,7 @@ import NewRequestPage from "./pages/NewRequestPage";
 import RequestDetailPage from "./pages/RequestDetailPage";
 import ConsentsPage from "./pages/ConsentsPage";
 import ConsentDetailPage from "./pages/ConsentDetailPage";
-import BindingsPage from "./pages/BindingsPage";
+import AccessPage from "./pages/AccessPage";
 import UseCasesPage from "./pages/UseCasesPage";
 
 export default function App() {
@@ -19,7 +19,7 @@ export default function App() {
         <Route path="/requests/:id" element={<RequestDetailPage />} />
         <Route path="/consents" element={<ConsentsPage />} />
         <Route path="/consents/:id" element={<ConsentDetailPage />} />
-        <Route path="/access" element={<BindingsPage />} />
+        <Route path="/access" element={<AccessPage />} />
         {compositeUrl() && <Route path="/use-cases" element={<UseCasesPage />} />}
         <Route path="*" element={<Navigate to="/requests" replace />} />
       </Route>

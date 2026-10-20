@@ -84,7 +84,7 @@ def consent_view(artefact, use_cases: dict) -> PartnerConsentResponse:
         valid_from=artefact.valid_from,
         valid_until=artefact.valid_until,
         assurance=artefact.assurance,
-        use_case=use_cases.get(artefact.consent_request_id),
+        use_case=artefact.use_case or use_cases.get(artefact.consent_request_id),
         consent_request_id=artefact.consent_request_id,
         created_at=artefact.created_at,
         revoked_at=artefact.revoked_at,

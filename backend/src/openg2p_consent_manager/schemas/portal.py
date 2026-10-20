@@ -1,7 +1,7 @@
 """Partner portal (consent scenario 1) and staff verification of assisted
 consents."""
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -16,14 +16,58 @@ class PartnerMe(BaseModel):
     roles: List[str]
 
 
-class PartnerBindingView(BaseModel):
-    """What the partner may ask for from one data controller (its active policy)."""
+class ScopePolicyView(BaseModel):
+    """What the partner may ask for from one data controller: its active scope
+    policy for it in Partner Management."""
 
     data_controller: str
     allowed_data_scopes: List[str]
     allowed_purposes: List[str]
     allowed_subject_id_types: List[str]
     max_validity_duration: Optional[str] = None
+    policy_version: int
+
+
+class UseCaseGrantView(BaseModel):
+    """What a consent for the use case grants from one registry: the use
+    case's scopes (``data_scopes`` = required ∪ optional)."""
+
+    data_controller: str
+    data_scopes: List[str]
+    required_scopes: List[str] = []
+    optional_scopes: List[str] = []
+
+
+class UseCaseAccessView(BaseModel):
+    """A use case granted to the partner by its use-case policy in Partner
+    Management, with its purpose and per-registry scopes from the Composite.
+    ``available`` is false (with ``detail``) when no consent can be made for it
+    now, e.g. the Composite does not publish it."""
+
+    use_case: str
+    title: Optional[str] = None
+    description: Optional[str] = None
+    purpose: Optional[str] = None
+    grants: List[UseCaseGrantView] = []
+    # The subject ID types the use case takes (Composite).
+    subject_id_types: List[str] = []
+    # From the partner's use-case policy.
+    allowed_purposes: List[str] = []
+    allowed_subject_id_types: List[str] = []
+    max_validity_duration: Optional[str] = None
+    policy_version: int
+    available: bool = True
+    detail: Optional[str] = None
+
+
+class PartnerAccessView(BaseModel):
+    """What the partner may ask for. ``consent_by``: ``use_case`` at the
+    Exchange (a consent is made for one of ``use_cases``), else ``scopes`` (a
+    consent names the registries and scopes, within ``scope_policies``)."""
+
+    consent_by: Literal["use_case", "scopes"]
+    scope_policies: List[ScopePolicyView] = []
+    use_cases: List[UseCaseAccessView] = []
 
 
 class Purpose(BaseModel):
@@ -42,9 +86,15 @@ class AssistedRequestCreate(BaseModel):
     # Other identifiers of the subject, e.g. [{"type": "FARMER_ID", "value": "FR-0007"}];
     # those in the CM's subject_required_identifiers must be present.
     subject_identifiers: List[SubjectId] = []
-    purpose: Purpose
-    grants: List[ConsentGrant] = Field(..., min_length=1)
+    # Required with ``grants``. Exchange role, by use case: optional (the use
+    # case's purpose; if given it must be that).
+    purpose: Optional[Purpose] = None
+    # The registries and scopes asked for. Exchange role: leave out and give
+    # ``use_case`` — the grants are the use case's.
+    grants: Optional[List[ConsentGrant]] = Field(None, min_length=1)
     validity: Optional[Validity] = None
+    # Exchange role: the use case (name@major) the consent is made for, granted
+    # to the partner in Partner Management. Elsewhere a label shown with it.
     use_case: Optional[str] = Field(None, max_length=255)
 
     @field_validator("subject_id")
@@ -61,10 +111,16 @@ class AssistedRequestCreate(BaseModel):
             raise ValueError("each subject identifier needs a type and a value")
         if len(types) != len(set(types)) or self.subject_id.type in types:
             raise ValueError("subject_identifiers name an ID type twice (or the subject's own)")
-        controllers = [g.data_controller for g in self.grants]
+        if self.grants is None:
+            if not self.use_case:
+                raise ValueError("give the 'grants' (or, at the Exchange, a 'use_case')")
+        elif self.purpose is None:
+            raise ValueError("'purpose' is required with 'grants'")
+        grants = self.grants or []
+        controllers = [g.data_controller for g in grants]
         if len(controllers) != len(set(controllers)):
             raise ValueError("'grants' names the same data_controller more than once")
-        if any(not g.data_scopes for g in self.grants):
+        if any(not g.data_scopes for g in grants):
             raise ValueError("each grant needs at least one data scope")
         v = self.validity
         if v and v.valid_from and v.valid_until and v.valid_until <= v.valid_from:
@@ -125,8 +181,11 @@ class SubjectAuthConfig(BaseModel):
 
 
 class RequestSettings(BaseModel):
-    """What a new assisted request needs (for the portal's form)."""
+    """What a new assisted request needs (for the portal's form).
+    ``consent_by``: ``use_case`` at the Exchange (the request names a granted
+    use case), else ``scopes`` (it names registries and scopes)."""
 
+    consent_by: Literal["use_case", "scopes"] = "scopes"
     required_subject_identifiers: List[str] = []
     subject_auth: SubjectAuthConfig
 

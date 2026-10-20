@@ -88,6 +88,15 @@ class RequestContext(BaseModel):
     # the consent's subject, the values must match (else deny subject_mismatch).
     # A different type is resolved by the registry, not CM.
     subject_id: Optional[SubjectId] = None
+    # Use-case mode (exchange role): the use case the caller (a configured
+    # receipt presenter, e.g. the Composite) serves, as `name@major`
+    # (loan-profile@1). The consenting partner's use-case policy in Partner
+    # Management must grant it; it replaces the partner's per-registry scope
+    # policies. Ignored for any other caller.
+    use_case: Optional[str] = Field(None, max_length=255, examples=["loan-profile@1"])
+    # Use-case mode: the purpose the use case serves; the consent's purpose code
+    # must equal it.
+    purpose: Optional[str] = Field(None, max_length=255, examples=["credit-assessment"])
 
 
 class ValidateRequest(BaseModel):

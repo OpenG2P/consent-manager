@@ -28,18 +28,21 @@ consent JWS.
   registry; or
 - legacy `data_controller` + `data_scopes` — treated as a single grant.
 
-**Request:** `consent_jws`, optional `partner_id`, optional `data_controller`
-(the calling registry), optional `request_context {requested_scopes, subject_id}`.
+**Request:** `consent_jws`, optional `partner_id` (the caller), optional
+`data_controller` (the calling registry), optional `request_context
+{requested_scopes, subject_id, use_case, purpose}`.
 
 - Consent with `grants`: `data_controller` is required (deny `malformed_object`
   if missing) and selects the grant (deny `controller_not_granted` if the
   consent has none for it).
 - Legacy consent: if `data_controller` is given it must equal the consent's
   (deny `controller_not_granted`).
-- The partner must have an active binding to that controller (deny
-  `unknown_partner`). Policies are per (partner audience, controller).
-- Effective scopes = grant scopes ∩ that binding's policy (∩
-  `requested_scopes` if sent).
+- The partner (`aud`, e.g. `bank-a`; in Partner Management `PARTNER_BANK_A`)
+  must have an active policy for that controller in Partner Management (deny
+  `unknown_partner`). Policies are per (partner, controller), read from PM and
+  cached; if PM cannot be reached and nothing is cached, deny
+  `policy_unavailable`.
+- Effective scopes = grant scopes ∩ that policy (∩ `requested_scopes` if sent).
 - `request_context.subject_id` with the same type as the consent subject but a
   different value: deny `subject_mismatch`. Other types are for the registry to
   resolve.
@@ -49,7 +52,8 @@ consent JWS.
 
 **Response:** the decision (`permit`/`deny`, `reason_code`, `detail`), and on
 permit `consent_id`, `receipt_id`, `subject_id` (the consent's subject),
-`data_controller`, `effective_data_scopes`, `valid_until`, `policy_version`.
+`data_controller`, `effective_data_scopes`, `valid_until`, `policy_version`
+(the version of the partner's policy in Partner Management).
 
 **Agri Stack exchange (opt-in, off by default):**
 
@@ -60,11 +64,21 @@ permit `consent_id`, `receipt_id`, `subject_id` (the consent's subject),
   `receipts: {data_controller: "<token JWS>"}` — one signed, short-lived
   consent token (`typ: consent-receipt+jwt`) per controller, verifiable with
   this CM's JWKS.
+- Use-case mode — a caller in `receipt_presenters` (the Composite) that sends
+  `request_context.use_case` (`name@major`, e.g. `loan-profile@1`): instead of
+  the partner's per-registry scope policies, its **use-case policy** in Partner
+  Management applies (deny `unknown_partner` if it has none). The use case must
+  be in its `allowed_use_cases` (deny `use_case_not_granted`); the consent's
+  purpose must equal `request_context.purpose` when sent and be one the policy
+  allows (`purpose_not_allowed`); the policy's subject id types, signing
+  algorithms and maximum validity apply. Per registry, effective scopes =
+  consent grant ∩ `requested_scopes` (the use case's scopes). Without
+  `use_case`, the partner's scope policies apply as above.
 - A consent token as `consent_jws` (department role) — accepted only from a
   configured trusted issuer (else deny `receipt_issuer_not_trusted`); its
   `aud` must be `data_controller` and its `presenter` the caller's
-  `partner_id`. Effective scopes = token scopes ∩ this CM's policy for the
-  presenter at that controller.
+  `partner_id`. Effective scopes = token scopes ∩ the presenter's scope policy
+  for that controller in this install's Partner Management.
 
 **A stored consent by its ID** (instead of `consent_jws`; exactly one of the
 two, else HTTP 400): `consent_id` and `consent_partner_id` (the partner that
@@ -73,7 +87,8 @@ active (`revoked` / `expired` / `not_yet_valid`), obtained by
 `consent_partner_id` (`partner_mismatch`) and for the subject in
 `request_context.subject_id` (`subject_mismatch`). Per grant, effective scopes
 = the consent's effective scopes ∩ the partner's CURRENT policy for that
-controller ∩ `requested_scopes`; a controller left with none is not granted.
+controller in Partner Management (in use-case mode: its use-case policy, as
+above) ∩ `requested_scopes`; a controller left with none is not granted.
 The permit carries `grants: {data_controller: [scopes]}` (also returned with
 `issue_receipts`); with `issue_receipts`, one receipt per granted controller.
 """

@@ -8,12 +8,54 @@ export interface Me {
   roles: string[];
 }
 
-// One active binding of this partner: what it may ask for from one registry.
-export interface Binding {
+// One active scope policy of this partner (set in Partner Management): what it
+// may ask for from one registry.
+export interface ScopePolicy {
   data_controller: string;
   allowed_data_scopes: string[];
   allowed_purposes: string[];
   allowed_subject_id_types: string[];
+  // ISO-8601 duration (e.g. "P1Y"); null = no limit beyond the default.
+  max_validity_duration: string | null;
+  policy_version: number;
+}
+
+// What a consent for a use case grants from one registry (data_scopes =
+// required + optional).
+export interface UseCaseGrant {
+  data_controller: string;
+  data_scopes: string[];
+  required_scopes: string[];
+  optional_scopes: string[];
+}
+
+// A use case granted to this partner by its use-case policy in Partner
+// Management (at the Exchange), with its purpose and data per registry from the
+// Composite. available=false: no consent can be made for it now (see detail).
+export interface UseCaseAccess {
+  use_case: string; // name@major
+  title?: string | null;
+  description?: string | null;
+  purpose?: string | null;
+  grants: UseCaseGrant[];
+  subject_id_types: string[];
+  allowed_purposes: string[];
+  allowed_subject_id_types: string[];
+  max_validity_duration: string | null;
+  policy_version: number;
+  available: boolean;
+  detail?: string | null;
+}
+
+// GET /access — what the partner may ask for. consent_by "use_case" (at the
+// Exchange): a request names one of use_cases. "scopes": a request names
+// registries and data, within scope_policies.
+export type ConsentBy = "use_case" | "scopes";
+
+export interface PartnerAccess {
+  consent_by: ConsentBy;
+  scope_policies: ScopePolicy[];
+  use_cases: UseCaseAccess[];
 }
 
 export interface SubjectId {
@@ -115,6 +157,7 @@ export interface SubjectAuthConfig {
 }
 
 export interface RequestSettings {
+  consent_by: ConsentBy;
   required_subject_identifiers: string[];
   subject_auth: SubjectAuthConfig;
 }
@@ -126,11 +169,13 @@ export interface SubjectAuthStart {
   expires_at: string;
 }
 
+// With grants: purpose and grants required, use_case a label. At the Exchange
+// (consent_by "use_case"): use_case only — the grants and purpose are the use case's.
 export interface ConsentRequestCreate {
   subject_id: SubjectId;
   subject_identifiers?: SubjectId[];
-  purpose: { code: string };
-  grants: Grant[];
+  purpose?: { code: string };
+  grants?: Grant[];
   validity?: { valid_from?: string; valid_until?: string };
   use_case?: string;
 }

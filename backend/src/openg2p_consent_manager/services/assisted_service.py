@@ -21,17 +21,15 @@ from ..models import (
     ConsentEvidence,
     ConsentRequest,
     EvidenceKind,
-    Partner,
-    PartnerPolicy,
-    PartnerStatus,
-    PolicyStatus,
     RequestMethod,
     RequestStatus,
 )
 from ..utils.canonical import iso_duration_to_timedelta
+from .composite_client import EXCHANGE_NEEDS_USE_CASE, consent_by_use_case
 from .evidence_service import EvidenceError, EvidenceService
 from .lifecycle_service import LifecycleError, LifecycleService
 from .partner_service import PartnerService
+from .pm_policy_client import PolicyUnavailable
 from .receipt_service import ReceiptService
 from .subject_auth_service import SubjectAuthService
 
@@ -64,41 +62,89 @@ class AssistedConsentService(BaseService):
 
     # ── Partner: what it may ask for ─────────────────────────────────────────
 
-    async def bindings(self, audience: str) -> list:
-        """The partner's active bindings that have an active policy."""
-        async with async_session()() as session:
-            rows = await session.execute(
-                select(Partner, PartnerPolicy)
-                .join(PartnerPolicy, PartnerPolicy.partner_id == Partner.id)
-                .where(
-                    Partner.audience == audience,
-                    Partner.status == PartnerStatus.active.value,
-                    PartnerPolicy.status == PolicyStatus.active.value,
-                )
-                .order_by(Partner.controller_id)
-            )
-            return [
+    async def access(self, audience: str) -> dict:
+        """What the partner may ask for. Exchange role: the use cases its
+        use-case policy in Partner Management grants, each with its purpose and
+        per-registry scopes from the Composite. Otherwise: its active scope
+        policies, one per data controller. Raises LifecycleError(503) when PM
+        or (exchange role) the Composite cannot be reached."""
+        if consent_by_use_case():
+            return {"consent_by": "use_case", "use_cases": await self._use_case_access(audience)}
+        try:
+            policies = await self.partners.scope_policies(audience)
+        except PolicyUnavailable as exc:
+            raise LifecycleError(
+                503, "the partner's policies could not be read from Partner Management"
+            ) from exc
+        return {
+            "consent_by": "scopes",
+            "scope_policies": [
                 {
-                    "data_controller": binding.controller_id,
+                    "data_controller": policy.data_controller,
                     "allowed_data_scopes": list(policy.allowed_data_scopes or []),
                     "allowed_purposes": list(policy.allowed_purposes or []),
                     "allowed_subject_id_types": list(policy.allowed_subject_id_types or []),
                     "max_validity_duration": policy.max_validity_duration,
+                    "policy_version": policy.version,
                 }
-                for binding, policy in rows.all()
-            ]
+                for policy in policies
+            ],
+        }
+
+    async def _use_case_access(self, audience: str) -> list:
+        policy = await self.lifecycle.use_case_policy(audience)
+        if policy is None:
+            return []
+        common = {
+            "allowed_purposes": list(policy.allowed_purposes or []),
+            "allowed_subject_id_types": list(policy.allowed_subject_id_types or []),
+            "max_validity_duration": policy.max_validity_duration,
+            "policy_version": policy.version,
+        }
+        out = []
+        for ref in policy.allowed_use_cases or []:
+            try:
+                use_case = await self.lifecycle.read_use_case(ref)
+            except LifecycleError as exc:
+                if exc.status_code == 503:
+                    raise
+                out.append({"use_case": ref, **common, "available": False,
+                            "detail": exc.detail})
+                continue
+            out.append(
+                {
+                    "use_case": use_case.ref,
+                    "title": use_case.title,
+                    "description": use_case.description,
+                    "purpose": use_case.purpose,
+                    "grants": use_case.grants,
+                    "subject_id_types": use_case.subject_id_types,
+                    **common,
+                }
+            )
+        return out
 
     # ── Partner: requests ────────────────────────────────────────────────────
 
     async def create_request(self, audience: str, username: str, data) -> ConsentRequest:
         """An assisted request. Each grant must be within the partner's active
         policy for that controller (scopes, and its purpose, subject id type
-        and maximum validity — an empty allowed list means any)."""
-        try:
-            resolved = await self.lifecycle.resolve_grants(audience, data.grants)
-        except LifecycleError as exc:
-            # "No active policy" is a policy check here, not a missing resource.
-            raise LifecycleError(422, exc.detail) from exc
+        and maximum validity — an empty allowed list means any).
+
+        Exchange role: always made for ``use_case`` (``grants`` refused)
+        (granted by the partner's use-case policy in Partner Management); the
+        grants and purpose are the Composite's use case, and the use-case
+        policy's purposes, subject id types and maximum validity apply."""
+        # Exchange role: always by use case, never with explicit grants.
+        # Elsewhere: grants checked against scope policies; use_case a label.
+        by_use_case = consent_by_use_case()
+        if by_use_case and (data.grants is not None or not data.use_case):
+            raise LifecycleError(400, EXCHANGE_NEEDS_USE_CASE)
+        if not by_use_case and data.grants is None:
+            raise LifecycleError(422, "'grants' is required")
+        resolved = (
+            None if by_use_case else await self.lifecycle.resolve_grants(audience, data.grants)
+        )
 
         given = {i.type.strip(): i.value.strip() for i in data.subject_identifiers}
         missing = [t for t in _config.subject_required_identifiers if t not in given]
@@ -111,6 +157,45 @@ class AssistedConsentService(BaseService):
         valid_until = _aware(validity.valid_until) if validity and validity.valid_until else None
         if valid_until is not None and valid_until <= now:
             raise LifecycleError(422, "validity.valid_until is in the past")
+
+        if by_use_case:
+            use_case, _, grants = await self.lifecycle.resolve_use_case(
+                audience, data.use_case, data.subject_id.type,
+                data.purpose.code if data.purpose else None, valid_from, valid_until,
+            )
+            purpose = {"code": use_case.purpose}
+            use_case_ref = use_case.ref
+        else:
+            self._check_scope_policies(resolved, data, valid_from, valid_until, now)
+            grants = [g for g, _ in resolved]
+            purpose = data.purpose.model_dump()
+            use_case_ref = data.use_case
+
+        async with async_session()() as session:
+            req = ConsentRequest(
+                subject_id_type=data.subject_id.type,
+                subject_id_value=data.subject_id.value,
+                subject_identifiers=[{"type": t, "value": v} for t, v in given.items()] or None,
+                controller_id=grants[0]["data_controller"] if len(grants) == 1 else None,
+                partner_id=audience,
+                purpose=purpose,
+                requested_scopes=sorted({s for g in grants for s in g["data_scopes"]}),
+                grants=grants,
+                valid_from=valid_from,
+                valid_until=valid_until,
+                status=RequestStatus.pending.value,
+                method=RequestMethod.assisted.value,
+                use_case=use_case_ref,
+                created_by=username,
+                partner_audience=audience,
+            )
+            session.add(req)
+            await session.commit()
+            await session.refresh(req)
+            return req
+
+    def _check_scope_policies(self, resolved, data, valid_from, valid_until, now) -> None:
+        """Each grant's scope policy: purpose, subject id type, maximum validity."""
         purpose_code = data.purpose.code
         for grant, policy in resolved:
             controller = grant["data_controller"]
@@ -131,31 +216,6 @@ class AssistedConsentService(BaseService):
                     raise LifecycleError(
                         422, f"validity_exceeds_policy for data_controller '{controller}'"
                     )
-
-        grants = [g for g, _ in resolved]
-        async with async_session()() as session:
-            req = ConsentRequest(
-                subject_id_type=data.subject_id.type,
-                subject_id_value=data.subject_id.value,
-                subject_identifiers=[{"type": t, "value": v} for t, v in given.items()] or None,
-                controller_id=grants[0]["data_controller"] if len(grants) == 1 else None,
-                # The binding of the first grant (as for a staff grants request).
-                partner_id=grants[0]["partner_binding_id"],
-                purpose=data.purpose.model_dump(),
-                requested_scopes=sorted({s for g in grants for s in g["data_scopes"]}),
-                grants=grants,
-                valid_from=valid_from,
-                valid_until=valid_until,
-                status=RequestStatus.pending.value,
-                method=RequestMethod.assisted.value,
-                use_case=data.use_case,
-                created_by=username,
-                partner_audience=audience,
-            )
-            session.add(req)
-            await session.commit()
-            await session.refresh(req)
-            return req
 
     async def list_requests(
         self, audience: Optional[str] = None, status: Optional[str] = None,
@@ -347,7 +407,7 @@ class AssistedConsentService(BaseService):
         identifiers_checked: bool = False,
     ) -> tuple[ConsentRequest, ConsentArtefact]:
         """Verify the evidence and create the consent: every requested grant,
-        narrowed to the binding's policy as it is now (a grant left with no
+        narrowed to the partner's policy as it is now (a grant left with no
         scope is dropped). A request with other subject identifiers (e.g. the
         Farmer ID) needs the approver to confirm them in the registry."""
         async with async_session()() as session:
@@ -363,14 +423,22 @@ class AssistedConsentService(BaseService):
                 )
 
             grants, fetch_type, max_validity = [], None, None
+            # A request made for a use case (exchange role) is narrowed to the
+            # use case's scopes as they are now (and needs the use case still
+            # granted), not to scope policies.
+            ceiling = await self.lifecycle.use_case_ceiling(req)
             for rg in req.grants or []:
-                binding = await session.get(Partner, rg["partner_binding_id"])
-                if binding is None or binding.status != PartnerStatus.active.value:
-                    continue
-                policy = await self.partners.get_policy(binding.id)
-                if policy is None:
-                    continue
-                effective = sorted(set(rg["data_scopes"]) & set(policy.allowed_data_scopes or []))
+                if ceiling is not None:
+                    policy = ceiling[0]
+                    allowed = ceiling[1].get(rg["data_controller"], set())
+                else:
+                    policy = await self.lifecycle.current_policy(
+                        req.partner_audience or req.partner_id, rg["data_controller"]
+                    )
+                    if policy is None:
+                        continue
+                    allowed = set(policy.allowed_data_scopes or [])
+                effective = sorted(set(rg["data_scopes"]) & allowed)
                 if not effective:
                     continue
                 fetch_type = fetch_type or policy.fetch_type
@@ -383,13 +451,15 @@ class AssistedConsentService(BaseService):
                         "data_scopes": rg["data_scopes"],
                         "granted_scopes": sorted(rg["data_scopes"]),
                         "effective_data_scopes": effective,
-                        "partner_binding_id": binding.id,
                         "policy_version": policy.version,
                     }
                 )
             if not grants:
                 raise LifecycleError(
-                    422, "no requested scope is permitted by the partner's current policy"
+                    422,
+                    f"no requested scope is in use case '{req.use_case}' now"
+                    if ceiling is not None else
+                    "no requested scope is permitted by the partner's current policy",
                 )
 
             kinds = (
@@ -438,7 +508,7 @@ class AssistedConsentService(BaseService):
                 subject_id_value=req.subject_id_value,
                 subject_identifiers=req.subject_identifiers,
                 controller_id=grants[0]["data_controller"] if len(grants) == 1 else None,
-                partner_id=grants[0]["partner_binding_id"],
+                partner_id=req.partner_audience or req.partner_id,
                 purpose=req.purpose,
                 data_scopes=req.requested_scopes,
                 effective_data_scopes=sorted(
@@ -452,11 +522,11 @@ class AssistedConsentService(BaseService):
                 policy_version=grants[0]["policy_version"] if len(grants) == 1 else None,
                 assurance=assurance,
                 consent_request_id=req.id,
+                use_case=req.use_case if ceiling is not None else None,
                 status=ArtefactStatus.active.value,
                 created_at=now,
             )
-            partner = await session.get(Partner, artefact.partner_id)
-            receipt = self.receipts.build_receipt(artefact, partner)
+            receipt = self.receipts.build_receipt(artefact)
             req.status = RequestStatus.approved.value
             req.verified_by = verified_by
             req.verified_at = now
@@ -487,10 +557,9 @@ class AssistedConsentService(BaseService):
 
     @staticmethod
     def _partner_consents(audience: str):
-        bindings = select(Partner.id).where(Partner.audience == audience)
         return select(ConsentArtefact).where(
             ConsentArtefact.source == ArtefactSource.originated.value,
-            ConsentArtefact.partner_id.in_(bindings),
+            ConsentArtefact.partner_id == audience,
         )
 
     async def list_consents(

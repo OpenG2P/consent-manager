@@ -136,7 +136,7 @@ class ConsentRecordService(BaseService):
             "subject_id": {"type": artefact.subject_id_type, "value": artefact.subject_id_value},
             "subject_identifiers": artefact.subject_identifiers or [],
             "purpose": artefact.purpose or {},
-            "use_case": use_cases.get(artefact.consent_request_id),
+            "use_case": artefact.use_case or use_cases.get(artefact.consent_request_id),
             "grants": [
                 {"data_controller": g.get("data_controller"),
                  "data_scopes": g.get("effective_data_scopes") or []}
