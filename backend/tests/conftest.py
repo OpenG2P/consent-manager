@@ -149,6 +149,9 @@ class FakePM:
             "max_fetch_frequency": None,
             "data_life": None,
             "effective_from": datetime.now(timezone.utc).isoformat(),
+            # Most tests sign their own consents (consent_jws); PM's default
+            # is false.
+            "allow_partner_consents": True,
         }
         policy.update(fields)
         self.policies.setdefault(pid, {})[key] = policy

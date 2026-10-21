@@ -50,6 +50,13 @@ class ReasonCode(str, Enum):
     # Partner Management (one policy per use case), or a stored consent was
     # given for another use case.
     use_case_not_granted = "use_case_not_granted"
+    # Consent by lookup (neither consent_jws nor consent_id): the CM holds no
+    # active, valid consent of that partner for that subject and use case (or,
+    # without a use case, data controller).
+    consent_not_found = "consent_not_found"
+    # A partner-signed consent (consent_jws) presented by a partner whose
+    # applicable policy does not set allow_partner_consents.
+    partner_consent_not_accepted = "partner_consent_not_accepted"
 
 
 class SubjectId(BaseModel):

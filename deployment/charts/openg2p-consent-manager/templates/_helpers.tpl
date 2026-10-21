@@ -61,7 +61,7 @@ trial.openg2p.org. Root context.
 - name: CONSENT_MANAGER_RECEIPT_PRESENTERS
   value: {{ toJson $presenters | quote }}
 - name: CONSENT_MANAGER_RECEIPT_TTL_SECONDS
-  value: {{ $x.receiptTtlSeconds | default 900 | quote }}
+  value: {{ $x.receiptTtlSeconds | default 300 | quote }}
 {{- end }}
 {{- $composite := tpl ($x.compositeApiUrl | default "") . -}}
 {{- if and (not $composite) (eq $role "exchange") }}{{ $composite = $x.defaultCompositeApiUrl }}{{ end -}}
@@ -73,7 +73,7 @@ trial.openg2p.org. Root context.
 - name: CONSENT_MANAGER_TRUSTED_RECEIPT_ISSUERS
   value: {{ toJson $issuers | quote }}
 - name: CONSENT_MANAGER_RECEIPT_STATUS_CHECK
-  value: {{ $x.receiptStatusCheck | default "always" | quote }}
+  value: {{ $x.receiptStatusCheck | default "never" | quote }}
 {{- end }}
 {{- end -}}
 

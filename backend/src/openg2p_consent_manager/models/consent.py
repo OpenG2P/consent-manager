@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -163,6 +163,29 @@ class ConsentArtefact(BaseORMModelWithId):
     __tablename__ = "consent_artefacts"
     __table_args__ = (
         UniqueConstraint("object_jti", "controller_id", name="uq_artefact_jti_controller"),
+        # Consent by lookup (/validate, use-case mode): active consents by
+        # (partner, subject, use case), latest valid_until first. Also created
+        # by migrate for existing databases.
+        Index(
+            "ix_consent_artefacts_lookup",
+            "partner_id", "subject_id_type", "subject_id_value", "use_case",
+            text("valid_until DESC"),
+            postgresql_where=text("status = 'active'"),
+        ),
+        # Consent by lookup at a registry (no use case): active consents by
+        # (partner, subject, data controller), latest valid_until first.
+        Index(
+            "ix_consent_artefacts_controller_lookup",
+            "partner_id", "subject_id_type", "subject_id_value", "controller_id",
+            text("valid_until DESC"),
+            postgresql_where=text("status = 'active'"),
+        ),
+        # Consent by lookup by one of the subject's other identifiers
+        # (subject_identifiers @> [{"type", "value"}]).
+        Index(
+            "ix_consent_artefacts_subject_identifiers", "subject_identifiers",
+            postgresql_using="gin", postgresql_ops={"subject_identifiers": "jsonb_path_ops"},
+        ),
     )
 
     subject_id_type: Mapped[str] = mapped_column(String(50), index=True)

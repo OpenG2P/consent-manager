@@ -58,6 +58,8 @@ def desired_policy(cfg) -> dict:
         "fetch_type": "oneshot",
         "max_fetch_frequency": None,
         "data_life": None,
+        # The e2e signs its own consents (consent_jws).
+        "allow_partner_consents": True,
     }
 
 
@@ -77,6 +79,8 @@ def _policy_matches(have: dict, want: dict) -> bool:
     if not set(want["allowed_signing_algs"]) <= set(have.get("allowed_signing_algs") or []):
         return False
     if have.get("fetch_type") != want["fetch_type"]:
+        return False
+    if have.get("allow_partner_consents") is not True:
         return False
     return have.get("max_validity_duration") in (None, want["max_validity_duration"])
 

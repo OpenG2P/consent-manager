@@ -229,6 +229,34 @@ class Initializer(BaseInitializer):
                         "ON consent_artefacts (consent_request_id)"
                     )
                 )
+                # Consent by lookup (/validate, use-case mode): active consents
+                # by (partner, subject, use case), latest valid_until first.
+                await conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_consent_artefacts_lookup "
+                        "ON consent_artefacts (partner_id, subject_id_type, "
+                        "subject_id_value, use_case, valid_until DESC) "
+                        "WHERE status = 'active'"
+                    )
+                )
+                # Consent by lookup by one of the subject's other identifiers
+                # (subject_identifiers @> [{"type", "value"}]).
+                await conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_consent_artefacts_subject_identifiers "
+                        "ON consent_artefacts USING gin (subject_identifiers jsonb_path_ops)"
+                    )
+                )
+                # Consent by lookup at a registry (no use case): by (partner,
+                # subject, data controller).
+                await conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_consent_artefacts_controller_lookup "
+                        "ON consent_artefacts (partner_id, subject_id_type, "
+                        "subject_id_value, controller_id, valid_until DESC) "
+                        "WHERE status = 'active'"
+                    )
+                )
             _logger.info("Database migration complete")
 
         asyncio.run(migrate())

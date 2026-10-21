@@ -13,6 +13,7 @@ POLICY = {
     "allowed_purposes": [], "allowed_subject_id_types": [], "allowed_signing_algs": ["EdDSA"],
     "max_validity_duration": "P1Y", "fetch_type": "oneshot", "max_fetch_frequency": None,
     "data_life": None, "effective_from": "2026-10-01T00:00:00Z",
+    "allow_partner_consents": True,
 }
 
 

@@ -62,7 +62,7 @@ permit `consent_id`, `receipt_id`, `subject_id` (the consent's subject),
   `receipt_presenter_not_allowed`). Every granted controller (or just
   `data_controller`) is validated as above; if all permit, the response adds
   `receipts: {data_controller: "<token JWS>"}` — one signed, short-lived
-  consent token (`typ: consent-receipt+jwt`) per controller, verifiable with
+  consent token (`typ: consent-token+jwt`) per controller, verifiable with
   this CM's JWKS.
 - Use-case mode — a caller in `receipt_presenters` (the Composite) that sends
   `request_context.use_case` (`name@major`, e.g. `loan-profile@1`): instead of
@@ -80,8 +80,8 @@ permit `consent_id`, `receipt_id`, `subject_id` (the consent's subject),
   `partner_id`. Effective scopes = token scopes ∩ the presenter's scope policy
   for that controller in this install's Partner Management.
 
-**A stored consent by its ID** (instead of `consent_jws`; exactly one of the
-two, else HTTP 400): `consent_id` and `consent_partner_id` (the partner that
+**A stored consent by its ID** (instead of `consent_jws`; not both, else
+deny `malformed_object`): `consent_id` and `consent_partner_id` (the partner that
 obtained it). The consent must be an originated one (deny `unknown_consent`),
 active (`revoked` / `expired` / `not_yet_valid`), obtained by
 `consent_partner_id` (`partner_mismatch`) and for the subject in
@@ -91,6 +91,33 @@ controller in Partner Management (in use-case mode: its policy for the use case,
 above) ∩ `requested_scopes`; a controller left with none is not granted.
 The permit carries `grants: {data_controller: [scopes]}` (also returned with
 `issue_receipts`); with `issue_receipts`, one receipt per granted controller.
+
+**Consent by lookup** (use-case mode only; neither `consent_jws` nor
+`consent_id`): `consent_partner_id`, `request_context.subject_id` and
+`request_context.use_case` are required and the caller must be a configured
+presenter (else deny `malformed_object`). The CM picks, among the consents it
+holds (originated ones, and partner-signed ones stored when first validated in
+use-case mode) of that partner, for that subject (type and value) and use case,
+active and valid now, the one with the latest `valid_until` (tie: the newest);
+none → deny `consent_not_found`. It is then validated as a stored consent
+(above); the decision carries its `consent_id`.
+
+**Consent by lookup at a registry** (no use case; neither `consent_jws` nor
+`consent_id`): `partner_id`, `data_controller` and
+`request_context.subject_id` are required (else deny `malformed_object`).
+Same selection among the consents of `partner_id` for that subject with a grant for `data_controller`; none → deny
+`consent_not_found`. Then the stored-consent path under the partner's scope
+policy for that registry.
+
+Both lookups match `request_context.subject_id` to the consent's subject or
+one of its `subject_identifiers` (e.g. FARMER_ID), type spelled exactly; the
+stored-consent subject check accepts the same.
+
+**Partner-signed consents** (`consent_jws` from a partner) are accepted only
+when the applicable policy (scope policy for the registry, or the use case's
+policy) sets `allow_partner_consents`; else deny
+`partner_consent_not_accepted`. Consents the CM holds (`consent_id`, lookup)
+and consent tokens are unaffected.
 """
 
 
@@ -139,12 +166,12 @@ class VerificationController(BaseController):
         # 4xx (the partner api's contract). The consent object itself is a
         # compact JWS (consent_jws) or a stored consent's ID (consent_id); its
         # claims and signature are validated inside the verification service.
-        if not isinstance(payload, dict) or bool(payload.get("consent_jws")) == bool(
-            payload.get("consent_id")
+        if not isinstance(payload, dict) or (
+            payload.get("consent_jws") and payload.get("consent_id")
         ):
             return Decision(
                 decision="deny", reason_code=ReasonCode.malformed_object,
-                detail="give exactly one of 'consent_jws' or 'consent_id'",
+                detail="give at most one of 'consent_jws' or 'consent_id'",
                 evaluated_at=datetime.now(timezone.utc),
             )
         try:

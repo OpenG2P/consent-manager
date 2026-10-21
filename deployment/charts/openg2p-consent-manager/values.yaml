@@ -113,7 +113,8 @@ global:
     # above and verifiable at the partner api's /.well-known/jwks.json.
     issuer: ''
     receiptPresenters: []
-    receiptTtlSeconds: 900
+    # Token lifetime (capped by the consent's expiry).
+    receiptTtlSeconds: 300
     # Exchange role: consents made through the partner portal or the lifecycle
     # API are made for a use case granted to the partner in Partner
     # Management; its purpose and per-registry scopes are read from the
@@ -132,8 +133,11 @@ global:
       issuer: ''
       jwksUrl: ''
       presenter: ''
-    # Check each consent token's status at its issuer: always | never.
-    receiptStatusCheck: always
+    # Check each consent token's status at its issuer: never | always. Off:
+    # tokens are short-lived and single-use; a revocation applies at the
+    # Exchange at once and to issued tokens within their lifetime. `always`
+    # adds a runtime call to the Exchange CM per token.
+    receiptStatusCheck: never
 
 postgres-init:
   enabled: true
@@ -218,11 +222,13 @@ keycloak-init:
 # only when partnerPortal.enabled (Chart.yaml condition). Set `enabled: false`
 # here to skip it while the portal is on (realm managed by hand).
 #
-# keycloak-init (0.0.0-develop.60) creates the realm and the public client. It
-# CANNOT create realm roles, declare user-profile attributes, add custom
-# protocol mappers, enforce PKCE or set user attributes — do these once in the
+# keycloak-init (0.0.0-develop.60) creates the realm, the public client and
+# its client roles PARTNER_OPERATOR and PARTNER_ADMIN (the CM accepts either,
+# realm or client role). It CANNOT declare user-profile attributes, add custom
+# protocol mappers, enforce PKCE or set user attributes: deployment/scripts/
+# setup-partner-realm.sh does these (and creates users), or do them once in the
 # Keycloak admin console (realm `partner`) after the first install:
-#   1. Realm roles → Create role: PARTNER_OPERATOR, then PARTNER_ADMIN.
+#   1. (client roles: created by keycloak-init.)
 #   2. Realm settings → User profile → Create attribute `partner_id`
 #      (who can view/edit: admin only). Keycloak 24+ drops undeclared attributes.
 #   3. Clients → consent-partner-portal → Client scopes →
@@ -233,8 +239,8 @@ keycloak-init:
 #   4. Clients → consent-partner-portal → Advanced → PKCE method S256
 #      (optional: the portal always sends PKCE; this makes it mandatory).
 #   5. Users → Add user per partner employee: set attribute `partner_id` (the
-#      partner's ID in Partner Management, e.g. bank-a), assign PARTNER_OPERATOR
-#      or PARTNER_ADMIN, set a password. For partnerPortal.testUsers use the
+#      partner's ID in Partner Management, e.g. bank-a), assign the client role
+#      PARTNER_OPERATOR or PARTNER_ADMIN of consent-partner-portal, set a password. For partnerPortal.testUsers use the
 #      passwords in the <release>-partner-test-users Secret.
 partner-keycloak-init:
   keycloak:
@@ -263,6 +269,11 @@ partner-keycloak-init:
             - 'https://{{ tpl .Values.global.consentPartnerPortalHostname $ }}/*'
           webOrigins:
             - 'https://{{ tpl .Values.global.consentPartnerPortalHostname $ }}'
+          # A partner user needs one of these (CONSENT_MANAGER_PARTNER_AUTH_ROLES).
+          # The CM makes no difference between them today.
+          clientRoles:
+            - PARTNER_OPERATOR
+            - PARTNER_ADMIN
 
 # Admin console SPA (React → nginx), served on the SAME host as the staff API
 # (a single VirtualService routes /consent/ → staff API, / → this UI). Runtime

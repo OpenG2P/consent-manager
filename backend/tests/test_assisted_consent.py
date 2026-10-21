@@ -528,7 +528,7 @@ def test_validate_needs_exactly_one_consent(call):
         status, decision = call("POST", "/consent/v1/validate", json=body)
         assert status == 200, decision
         assert decision["decision"] == "deny" and decision["reason_code"] == "malformed_object"
-        assert "exactly one" in decision["detail"]
+        assert "consent_jws" in decision["detail"] and "consent_id" in decision["detail"]
 
 
 def test_validate_consent_id_denials(call, portal, as_partner, bank, upload, run, new_partner):
@@ -621,7 +621,7 @@ def test_validate_consent_id_issues_receipts(call, portal, as_partner, bank, upl
     assert set(body["receipts"]) == {FR, CSR}
     assert body["grants"] == {FR: ["farmer_personal_details"], CSR: ["crop_season"]}
     header, claims = _claims(body["receipts"][CSR])
-    assert header["typ"] == "consent-receipt+jwt"
+    assert header["typ"] == "consent-token+jwt"
     assert claims["iss"] == "agri-stack-exchange-cm" and claims["aud"] == CSR
     assert claims["partner"] == bank.audience and claims["presenter"] == PRESENTER
     assert claims["consent_id"] == consent_id and claims["scopes"] == ["crop_season"]

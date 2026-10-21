@@ -161,12 +161,17 @@ class Settings(BaseSettings):
     # are signed with the CM signing key above (same kid/alg, same JWKS).
     receipt_issuer: str = ""  # e.g. agri-stack-exchange-cm
     receipt_presenters: list[str] = []  # e.g. ["agri-composite"]
-    receipt_ttl_seconds: int = 900
+    # Token lifetime (capped by the consent's expiry). Short: a department
+    # checks tokens offline, so a revocation reaches issued tokens within it.
+    receipt_ttl_seconds: int = 300
     # Department role: exchange CMs whose consent tokens /validate accepts.
     # Empty → tokens are denied (receipt_issuer_not_trusted); nothing else changes.
     trusted_receipt_issuers: list[TrustedReceiptIssuer] = []
-    # Check each consent token's status at its issuer: always | never.
-    receipt_status_check: str = "always"
+    # Check each consent token's status at its issuer: never | always. Off by
+    # default: tokens are short-lived and single-use; a revocation applies at
+    # the exchange CM at once and to issued tokens within their lifetime.
+    # "always" adds a runtime call to the exchange CM per token.
+    receipt_status_check: str = "never"
     receipt_status_cache_ttl_seconds: int = 10
     receipt_jwks_cache_ttl_seconds: int = 300
     # Minimum interval between JWKS refetches for one issuer on an unknown kid.

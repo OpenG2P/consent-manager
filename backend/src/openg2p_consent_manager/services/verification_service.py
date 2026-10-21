@@ -6,7 +6,7 @@ from typing import Optional
 
 from openg2p_fastapi_common.service import BaseService
 from openg2p_fastapi_common.utils.crypto import build_crypto_helper
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from ..config import Settings
@@ -21,7 +21,7 @@ from ..models import (
 from ..schemas.common import ReasonCode
 from ..schemas.verification import ConsentObject, Decision, ValidateRequest
 from ..utils.canonical import b64url_decode, iso_duration_to_timedelta, sha256_hex
-from .exchange_service import RECEIPT_TYP, ExchangeService, to_datetime
+from .exchange_service import TOKEN_TYPS, ExchangeService, to_datetime
 from .partner_service import PartnerService
 from .pm_policy_client import PolicyUnavailable, policy_fields
 from .policy_service import PolicyService
@@ -63,6 +63,8 @@ class VerificationService(BaseService):
     async def validate(self, parsed: ValidateRequest) -> Decision:
         if parsed.consent_id:
             return await self._validate_stored(parsed)
+        if not parsed.consent_jws:
+            return await self._validate_lookup(parsed)
         if parsed.issue_receipts:
             return await self._validate_and_issue(parsed)
         now = datetime.now(timezone.utc)
@@ -82,7 +84,7 @@ class VerificationService(BaseService):
                 now, ctx_hash,
             )
         # An exchange CM's consent token (department role).
-        if isinstance(jws_header, dict) and jws_header.get("typ") == RECEIPT_TYP:
+        if isinstance(jws_header, dict) and jws_header.get("typ") in TOKEN_TYPS:
             return await self._validate_receipt(parsed, claims, jws_header, now, ctx_hash)
         try:
             obj = ConsentObject(**claims)
@@ -165,6 +167,18 @@ class VerificationService(BaseService):
             )
         partner = material["partner"]
         policy = material["policy"]
+
+        # 2b. Partner-signed consents are accepted only when the applicable
+        #     policy allows them (the CM cannot verify the subject agreed; only
+        #     the partner's signature). Consents the CM holds are unaffected.
+        if not getattr(policy, "allow_partner_consents", False):
+            return await self._deny(
+                ReasonCode.partner_consent_not_accepted,
+                "the partner's policy does not accept consents it signed itself "
+                "(allow_partner_consents)",
+                now, ctx_hash, partner_id=partner.audience, jti=obj.jti,
+                data_controller=controller, policy=policy,
+            )
 
         # 3. Signature — verify the consent JWS against the partner's key from
         # Partner Management. The shared helper reads the kid from the JWS header,
@@ -256,8 +270,11 @@ class VerificationService(BaseService):
 
         # Permit — mint canonical artefact + signed receipt + decision log for
         # this (consent, controller).
+        # In use-case mode the stored consent records the use case, so a later
+        # request without a consent finds it (consent by lookup).
         return await self._permit(
-            obj, grant, partner, result, now, ctx_hash
+            obj, grant, partner, result, now, ctx_hash,
+            use_case=parsed.request_context.use_case if use_case_mode else None,
         )
 
     # ── Agri Stack exchange: issuing consent tokens (exchange role) ─────────
@@ -278,7 +295,7 @@ class VerificationService(BaseService):
             )
         try:
             claims, jws_header = self._decode_jws(parsed.consent_jws)
-            if isinstance(jws_header, dict) and jws_header.get("typ") == RECEIPT_TYP:
+            if isinstance(jws_header, dict) and jws_header.get("typ") in TOKEN_TYPS:
                 raise ValueError("receipts are issued from a partner consent, not a receipt")
             obj = ConsentObject(**claims)
         except Exception as exc:
@@ -320,15 +337,161 @@ class VerificationService(BaseService):
             evaluated_at=now, receipts=receipts, grants=grants,
         )
 
+    # ── Consent by lookup (no consent_jws / consent_id) ─────────────────────
+
+    async def _validate_lookup(self, parsed: ValidateRequest) -> Decision:
+        """Neither ``consent_jws`` nor ``consent_id``: find a consent the CM
+        holds and validate it as a stored consent.
+
+        * Use-case mode (the Composite): by (consent_partner_id, subject,
+          use case).
+        * Otherwise (a registry, path A): by (partner_id, subject,
+          data_controller).
+
+        Active and valid now; several → latest ``valid_until``, then newest;
+        none → ``consent_not_found``."""
+        now = datetime.now(timezone.utc)
+        ctx = parsed.request_context
+        subject = ctx.subject_id if ctx else None
+        if self._use_case_mode(parsed):
+            partner_aud = parsed.consent_partner_id
+            if subject is None or not partner_aud:
+                return self._lookup_malformed(now)
+            # Served by the partial index ix_consent_artefacts_lookup. Only
+            # originated and partner-signed consents carry a use case.
+            key = ctx.use_case
+            match = ConsentArtefact.use_case == key
+            what = f"use case '{key}'"
+            update = {}
+        else:
+            partner_aud = parsed.partner_id
+            key = parsed.data_controller
+            if subject is None or not partner_aud or not key:
+                return self._lookup_malformed(now)
+            # Served by the partial index ix_consent_artefacts_controller_lookup
+            # (a single-controller consent); an originated consent with several
+            # grants has no controller_id and is matched on its grants.
+            # A consent given for a use case is only for that use case (through
+            # the Composite), never for a direct call to the registry.
+            match = and_(
+                ConsentArtefact.use_case.is_(None),
+                or_(
+                    ConsentArtefact.controller_id == key,
+                    and_(
+                        ConsentArtefact.controller_id.is_(None),
+                        ConsentArtefact.grants.contains([{"data_controller": key}]),
+                    ),
+                ),
+            )
+            what = f"data controller '{key}'"
+            # The stored-consent path checks consent_partner_id against the
+            # consent: here the caller is that partner.
+            update = {"consent_partner_id": partner_aud}
+        ctx_hash = sha256_hex(
+            f"lookup:{partner_aud}:{subject.type}:{subject.value}:{key}".encode("utf-8")
+        )
+        async with async_session()() as session:
+            result = await session.execute(
+                select(ConsentArtefact)
+                .where(
+                    ConsentArtefact.partner_id == partner_aud,
+                    # The consent's subject (the lookup indexes) or one of its
+                    # other identifiers, e.g. the Farmer ID (GIN index
+                    # ix_consent_artefacts_subject_identifiers). Types are
+                    # matched as spelled: no aliasing.
+                    or_(
+                        and_(
+                            ConsentArtefact.subject_id_type == subject.type,
+                            ConsentArtefact.subject_id_value == subject.value,
+                        ),
+                        ConsentArtefact.subject_identifiers.contains(
+                            [{"type": subject.type, "value": subject.value}]
+                        ),
+                    ),
+                    match,
+                    ConsentArtefact.source != ArtefactSource.receipt.value,
+                    ConsentArtefact.status == ArtefactStatus.active.value,
+                    ConsentArtefact.valid_from <= now,
+                    ConsentArtefact.valid_until > now,
+                )
+                .order_by(
+                    ConsentArtefact.valid_until.desc(), ConsentArtefact.created_at.desc()
+                )
+                .limit(1)
+            )
+            artefact = result.scalars().first()
+        if artefact is None:
+            return await self._deny(
+                ReasonCode.consent_not_found,
+                f"no active consent of partner '{partner_aud}' for this subject and {what}",
+                now, ctx_hash, partner_id=partner_aud,
+                data_controller=parsed.data_controller,
+            )
+        return await self._validate_stored(
+            parsed.model_copy(update={"consent_id": artefact.id, **update}),
+            artefact=artefact,
+        )
+
+    @staticmethod
+    def _lookup_malformed(now) -> Decision:
+        return Decision(
+            decision="deny", reason_code=ReasonCode.malformed_object,
+            detail="give 'consent_jws' or 'consent_id', or for consent by lookup "
+            "request_context.subject_id with either (a configured presenter) "
+            "consent_partner_id and request_context.use_case, or partner_id and "
+            "data_controller",
+            evaluated_at=now,
+        )
+
+    async def _stored_grants(self, artefact: ConsentArtefact, now: datetime) -> list:
+        """The grants of a stored consent, each with the artefact (consent_id)
+        it is recorded on. An originated consent holds its grants; a
+        partner-signed one is stored per controller (same jti), so its grants
+        are the active, valid artefacts of that jti for the same partner and
+        use case."""
+        if artefact.source != ArtefactSource.embedded.value:
+            return [
+                {**g, "consent_id": artefact.id}
+                for g in artefact.grants or [
+                    {
+                        "data_controller": artefact.controller_id,
+                        "effective_data_scopes": artefact.effective_data_scopes or [],
+                    }
+                ]
+            ]
+        async with async_session()() as session:
+            result = await session.execute(
+                select(ConsentArtefact).where(
+                    ConsentArtefact.object_jti == artefact.object_jti,
+                    ConsentArtefact.partner_id == artefact.partner_id,
+                    ConsentArtefact.use_case == artefact.use_case,
+                    ConsentArtefact.source == ArtefactSource.embedded.value,
+                    ConsentArtefact.status == ArtefactStatus.active.value,
+                    ConsentArtefact.valid_until > now,
+                )
+            )
+            siblings = list(result.scalars().all())
+        return [
+            {
+                "data_controller": a.controller_id,
+                "effective_data_scopes": a.effective_data_scopes or [],
+                "consent_id": a.id,
+            }
+            for a in sorted(siblings, key=lambda a: a.controller_id or "")
+        ]
+
     # ── A stored (originated) consent presented by its ID ───────────────────
 
-    async def _validate_stored(self, parsed: ValidateRequest) -> Decision:
+    async def _validate_stored(
+        self, parsed: ValidateRequest, artefact: Optional[ConsentArtefact] = None
+    ) -> Decision:
         """``consent_id``: a consent the CM holds (originated — e.g. an assisted
         consent verified by staff). Checks the consent's state, the partner
         that obtained it and the subject; each grant is narrowed to the
         partner's CURRENT policy for its controller (and requested_scopes).
         With ``issue_receipts``, signs one consent token per granted controller in
-        exactly the format used for a partner-signed consent."""
+        exactly the format used for a partner-signed consent. ``artefact``:
+        the consent found by lookup (originated or partner-signed)."""
         from ..schemas.common import SubjectId
 
         now = datetime.now(timezone.utc)
@@ -344,9 +507,12 @@ class VerificationService(BaseService):
                     data_controller=parsed.data_controller,
                 )
 
-        async with async_session()() as session:
-            artefact = await session.get(ConsentArtefact, consent_id)
-        if artefact is None or artefact.source != ArtefactSource.originated.value:
+        if artefact is None:
+            async with async_session()() as session:
+                artefact = await session.get(ConsentArtefact, consent_id)
+            if artefact is not None and artefact.source != ArtefactSource.originated.value:
+                artefact = None
+        if artefact is None:
             return await self._deny(
                 ReasonCode.unknown_consent, "no stored consent with this consent_id",
                 now, ctx_hash, data_controller=parsed.data_controller,
@@ -382,7 +548,8 @@ class VerificationService(BaseService):
             )
         ctx_subject = parsed.request_context.subject_id if parsed.request_context else None
         if self._subject_mismatch(
-            ctx_subject, artefact.subject_id_type, artefact.subject_id_value
+            ctx_subject, artefact.subject_id_type, artefact.subject_id_value,
+            artefact.subject_identifiers,
         ):
             return await self._deny(
                 ReasonCode.subject_mismatch,
@@ -390,12 +557,7 @@ class VerificationService(BaseService):
                 now, ctx_hash, **log,
             )
 
-        stored = artefact.grants or [
-            {
-                "data_controller": artefact.controller_id,
-                "effective_data_scopes": artefact.effective_data_scopes or [],
-            }
-        ]
+        stored = await self._stored_grants(artefact, now)
         if parsed.data_controller:
             stored = [g for g in stored if g.get("data_controller") == parsed.data_controller]
             if not stored:
@@ -413,7 +575,7 @@ class VerificationService(BaseService):
         # Management: its scope policy for the controller or, in use-case mode,
         # its policy for the use case (whose ceiling is the requested scopes).
         use_case_mode = self._use_case_mode(parsed)
-        granted: dict[str, tuple[list, Optional[int]]] = {}
+        granted: dict[str, tuple[list, object, str]] = {}
         if (
             use_case_mode
             and artefact.use_case
@@ -467,7 +629,7 @@ class VerificationService(BaseService):
                 if requested is not None:
                     effective &= requested
                 if effective:
-                    granted[controller] = (sorted(effective), policy)
+                    granted[controller] = (sorted(effective), policy, g["consent_id"])
         except PolicyUnavailable:
             return await self._deny(
                 ReasonCode.policy_unavailable,
@@ -484,18 +646,18 @@ class VerificationService(BaseService):
         subject = SubjectId(type=artefact.subject_id_type, value=artefact.subject_id_value)
         decisions = {
             controller: Decision(
-                decision="permit", reason_code=ReasonCode.ok, consent_id=artefact.id,
+                decision="permit", reason_code=ReasonCode.ok, consent_id=cid,
                 subject_id=subject, data_controller=controller,
                 effective_data_scopes=scopes, valid_until=artefact.valid_until,
                 **policy_fields(policy), evaluated_at=now,
             )
-            for controller, (scopes, policy) in granted.items()
+            for controller, (scopes, policy, cid) in granted.items()
         }
         async with async_session()() as session:
-            for controller, (_, policy) in granted.items():
+            for controller, (_, policy, cid) in granted.items():
                 session.add(
                     DecisionLog(
-                        partner_id=audience, consent_id=artefact.id,
+                        partner_id=audience, consent_id=cid,
                         data_controller=controller, decision="permit",
                         reason_code=ReasonCode.ok.value, **policy_fields(policy),
                         request_ctx_hash=ctx_hash,
@@ -539,8 +701,8 @@ class VerificationService(BaseService):
         self, parsed: ValidateRequest, claims, header: dict, now, ctx_hash
     ) -> Decision:
         """A consent token from an exchange CM: verify it against a trusted
-        issuer's JWKS, check audience/presenter/time (and its status at the
-        issuer), then apply THIS CM's standing policy for the presenter at the
+        issuer's JWKS, check audience/presenter/time (and, if configured, its
+        status at the issuer), then apply THIS CM's standing policy for the presenter at the
         calling controller. Effective scopes = token scopes ∩ policy."""
         claims = claims if isinstance(claims, dict) else {}
         iss = claims.get("iss")
@@ -639,8 +801,9 @@ class VerificationService(BaseService):
                 now, ctx_hash, **log,
             )
 
-        # 3. Status at the issuer (revoked consent → revoked token).
-        if (_config.receipt_status_check or "always").lower() != "never":
+        # 3. Status at the issuer (revoked consent → revoked token); optional,
+        #    off by default (tokens are short-lived).
+        if (_config.receipt_status_check or "never").lower() == "always":
             status = await self.exchange.remote_status(trusted, jti)
             if status is None:
                 return await self._deny(
@@ -789,12 +952,20 @@ class VerificationService(BaseService):
             return list(result.scalars().all())
 
     @staticmethod
-    def _subject_mismatch(ctx_subject, subject_type: str, subject_value: str) -> bool:
-        return (
-            ctx_subject is not None
-            and ctx_subject.type == subject_type
-            and ctx_subject.value != subject_value
-        )
+    def _subject_mismatch(
+        ctx_subject, subject_type: str, subject_value: str, identifiers=None
+    ) -> bool:
+        """The caller's subject contradicts the consent: same type as the
+        consent's subject (or as one of its other ``identifiers``, e.g. the
+        Farmer ID), another value. A type the consent does not carry is left
+        to the registry."""
+        if ctx_subject is None:
+            return False
+        known = {subject_type: subject_value}
+        for i in identifiers or []:
+            if isinstance(i, dict) and i.get("type") and i["type"] not in known:
+                known[i["type"]] = i.get("value")
+        return ctx_subject.type in known and ctx_subject.value != known[ctx_subject.type]
 
     async def _existing_artefact(
         self, jti: str, controller_id: str
@@ -842,10 +1013,12 @@ class VerificationService(BaseService):
         source: str = ArtefactSource.embedded.value,
         valid_until: Optional[datetime] = None,
         receipt_jti: Optional[str] = None, receipt_issuer: Optional[str] = None,
+        use_case: Optional[str] = None,
     ) -> Decision:
         from ..schemas.common import SubjectId
 
         artefact = ConsentArtefact(
+            use_case=use_case,
             subject_id_type=obj.subject_id.type,
             subject_id_value=obj.subject_id.value,
             controller_id=grant.data_controller,

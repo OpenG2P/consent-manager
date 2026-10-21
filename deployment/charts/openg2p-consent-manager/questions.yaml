@@ -198,9 +198,9 @@ questions:
   group: Exchange
   show_if: global.agriStackExchange.role=exchange
 - variable: global.agriStackExchange.receiptTtlSeconds
-  description: "Token lifetime in seconds (capped by the consent's expiry)."
+  description: "Consent token lifetime in seconds (capped by the consent's expiry). Short, because departments check tokens offline: a revocation reaches tokens already issued within this time."
   type: int
-  default: 900
+  default: 300
   label: Token Lifetime (seconds)
   group: Exchange
   show_if: global.agriStackExchange.role=exchange
@@ -240,10 +240,10 @@ questions:
   group: Exchange
   show_if: global.agriStackExchange.role=department
 - variable: global.agriStackExchange.receiptStatusCheck
-  description: "Check each token's status (revoked/expired) at the Exchange CM."
+  description: "Check each token's status (revoked/expired) at the Exchange CM. Off by default: tokens are short-lived and single-use; a revocation applies at the Exchange immediately and to issued tokens within their lifetime. Turning it on adds a runtime call to the Exchange CM for every token."
   type: enum
-  options: [always, never]
-  default: always
+  options: [never, always]
+  default: never
   label: Token Status Check
   group: Exchange
   show_if: global.agriStackExchange.role=department

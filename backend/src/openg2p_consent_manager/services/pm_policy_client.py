@@ -81,6 +81,9 @@ class PmPolicy:
     data_life: Optional[str] = None
     effective_from: Optional[str] = None
     id: Optional[str] = None
+    # The partner may present a consent it collected and signed itself
+    # (consent_jws). Default false: only consents the CM holds are accepted.
+    allow_partner_consents: bool = False
 
     @property
     def is_use_case(self) -> bool:
@@ -118,6 +121,7 @@ class PmPolicy:
                 str(data["effective_from"]) if data.get("effective_from") else None
             ),
             id=str(data["id"]) if data.get("id") else None,
+            allow_partner_consents=data.get("allow_partner_consents") is True,
         )
 
 

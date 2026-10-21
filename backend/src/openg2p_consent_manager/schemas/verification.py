@@ -103,7 +103,11 @@ class ValidateRequest(BaseModel):
     # The partner-signed consent object, as a compact JWS (header.payload.sig).
     # CM recovers the claims from the payload and verifies the signature against
     # the partner's Partner-Management key referenced by the JWS ``kid``.
-    # Exactly one of consent_jws / consent_id.
+    # At most one of consent_jws / consent_id. Neither: consent by lookup —
+    # the CM finds the consent it holds for request_context.subject_id and, in
+    # use-case mode, consent_partner_id and .use_case; otherwise partner_id and
+    # data_controller. A partner-signed consent is accepted only when the
+    # applicable policy sets allow_partner_consents.
     consent_jws: Optional[str] = None
     # A stored (originated) consent, by its ID, and the partner that obtained
     # it (its audience, e.g. bank-a) — checked against the consent.
@@ -122,8 +126,8 @@ class ValidateRequest(BaseModel):
 
     @model_validator(mode="after")
     def _one_consent(self):
-        if bool(self.consent_jws) == bool(self.consent_id):
-            raise ValueError("give exactly one of 'consent_jws' or 'consent_id'")
+        if self.consent_jws and self.consent_id:
+            raise ValueError("give at most one of 'consent_jws' or 'consent_id'")
         return self
 
 

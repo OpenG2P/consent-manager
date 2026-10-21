@@ -38,6 +38,14 @@ subject_id, use_case, purpose}`:
   `request_context.use_case`): the partner's policy for that use case in PM
   (`?use_case=name@major`; one policy per use case) applies instead; none:
   `use_case_not_granted`.
+- A partner-signed `consent_jws` is accepted only when the applicable policy
+  sets `allow_partner_consents` (else `partner_consent_not_accepted`).
+- Consent by lookup at a registry: neither `consent_jws` nor `consent_id`, with
+  `partner_id`, `data_controller` and `request_context.subject_id` — the CM
+  picks the partner's active consent for that subject (its subject or one of its
+  `subject_identifiers`; type spelled exactly)
+  with a grant for that controller (latest `valid_until`, then newest; none:
+  `consent_not_found`) and validates it under the scope policy.
 - `request_context.subject_id` of the consent subject's type but another value
   is denied `subject_mismatch`.
 - Replay/idempotency is per (`jti`, `data_controller`): each registry gets its
@@ -55,8 +63,10 @@ partner has a policy in PM (else `422 use_case_not_granted`; explicit grants are
 refused, `400`): its grants and purpose are the use case's,
 read from the Composite (`CONSENT_MANAGER_COMPOSITE_API_URL`, `GET
 /composite/v1/use-cases/{ref}`; unreachable → 503), and the consent is
-presentable in use-case mode only for that use case. They cannot yet be presented at
-`/validate`, which takes a partner-signed JWS only.
+presentable in use-case mode only for that use case: by `consent_id`, or by
+lookup — a presenter sends neither `consent_jws` nor `consent_id`, and the CM
+picks the partner's active consent for the subject and use case (latest
+`valid_until`, then newest; none: `consent_not_found`).
 
 ## Tests
 
