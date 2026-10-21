@@ -1,7 +1,7 @@
 """Use-case mode on /validate (G2P-5719, contract §7): a configured receipt
 presenter (the Composite) names the use case it serves; the consenting
-partner's use-case policy in Partner Management then replaces its per-registry
-scope policies."""
+partner's policy for that use case in Partner Management (one policy per use
+case, §11) then replaces its per-registry scope policies."""
 import pytest
 from test_assisted_consent import (  # noqa: F401 (fixtures)
     approved_consent,
@@ -27,9 +27,10 @@ def ctx(**extra):
 
 @pytest.fixture
 def bank(pm, new_partner):
-    """A partner granted the use case in the exchange's PM (no scope policies)."""
+    """A partner granted two use cases in the exchange's PM (one policy each;
+    no scope policies)."""
     p = new_partner()
-    pm.grant(p.audience, None, use_cases=[USE_CASE, "name@1"])
+    pm.grant_use_cases(p.audience, [USE_CASE, "name@1"])
     return p
 
 
@@ -50,8 +51,8 @@ def test_use_case_permit_limits_scopes_to_consent_and_use_case(call, cfg, pm, ba
     assert set(body["receipts"]) == {FR, CSR}
     # consent grant ∩ requested (the use case's scopes), per registry.
     assert body["grants"] == {FR: ["farmer_personal_details"], CSR: ["crop_season"]}
-    # Only the use-case policy was read (data_controller empty).
-    assert {r.url.params.get("data_controller") for r in pm.requests} == {""}
+    # Only the use case's policy was read.
+    assert {tuple(r.url.params.items()) for r in pm.requests} == {(("use_case", USE_CASE),)}
 
 
 def test_use_case_not_granted(call, cfg, bank):
@@ -76,26 +77,50 @@ def test_use_case_purpose_must_match_consent(call, cfg, bank):
 
 def test_use_case_policy_purposes_subject_types_and_validity_apply(call, cfg, pm, bank):
     exchange_on(cfg)
-    pm.grant(bank.audience, None, use_cases=[USE_CASE], allowed_purposes=["insurance"])
+    pm.grant_use_cases(bank.audience, [USE_CASE], allowed_purposes=["insurance"])
     assert issue(call, bank)["reason_code"] == "purpose_not_allowed"
-    pm.grant(bank.audience, None, use_cases=[USE_CASE], allowed_subject_id_types=["PHONE"])
+    pm.grant_use_cases(bank.audience, [USE_CASE], allowed_subject_id_types=["PHONE"])
     assert issue(call, bank)["reason_code"] == "subject_not_allowed"
-    pm.grant(bank.audience, None, use_cases=[USE_CASE], max_validity_duration="P7D")
+    pm.grant_use_cases(bank.audience, [USE_CASE], max_validity_duration="P7D")
     assert issue(call, bank)["reason_code"] == "validity_exceeds_policy"
-    pm.grant(bank.audience, None, use_cases=[USE_CASE], allowed_signing_algs=["ES256"])
+    pm.grant_use_cases(bank.audience, [USE_CASE], allowed_signing_algs=["ES256"])
     assert issue(call, bank)["reason_code"] == "signature_invalid"
-    version = pm.grant(bank.audience, None, use_cases=[USE_CASE])
+    version = pm.grant_use_cases(bank.audience, [USE_CASE])
     body = issue(call, bank, data_controller=FR)
     assert body["decision"] == "permit" and body["policy_version"] == version
 
 
-def test_partner_without_use_case_policy_is_unknown(call, cfg, pm, new_partner):
+def test_partner_without_use_case_policy_is_not_granted(call, cfg, pm, new_partner):
     exchange_on(cfg)
     p = new_partner()
     bind(pm, p, FR, FR_SCOPES)  # a scope policy only
     body = issue(call, p)
-    assert body["decision"] == "deny" and body["reason_code"] == "unknown_partner"
-    assert "use-case policy" in body["detail"]
+    assert body["decision"] == "deny" and body["reason_code"] == "use_case_not_granted"
+    assert USE_CASE in body["detail"]
+
+
+def test_each_use_case_has_its_own_policy(call, cfg, pm, new_partner):
+    """Two use cases with different purposes: each is checked against its own
+    policy; revoking one leaves the other working."""
+    exchange_on(cfg)
+    p = new_partner()
+    pm.grant(p.audience, None, use_case=USE_CASE, allowed_purposes=["credit-assessment"])
+    pm.grant(p.audience, None, use_case="crop-insurance@1", allowed_purposes=["insurance"])
+    credit = p.claims(grants=GRANTS)
+    insurance = p.claims(grants=GRANTS, purpose={"code": "insurance"})
+    assert issue(call, p, claims=credit)["decision"] == "permit"
+    body = issue(call, p, claims=insurance, use_case="crop-insurance@1", purpose="insurance")
+    assert body["decision"] == "permit", body
+    # A purpose allowed by the other use case's policy is not allowed here.
+    body = issue(call, p, claims=p.claims(grants=GRANTS, purpose={"code": "insurance"}),
+                 purpose="insurance")
+    assert body["reason_code"] == "purpose_not_allowed"
+    # No policy for one use case: denied, the other still works.
+    pm.revoke(p.audience, use_case="crop-insurance@1")
+    body = issue(call, p, claims=p.claims(grants=GRANTS, purpose={"code": "insurance"}),
+                 use_case="crop-insurance@1", purpose="insurance")
+    assert body["reason_code"] == "use_case_not_granted"
+    assert issue(call, p)["decision"] == "permit"
 
 
 def test_stored_decision_is_not_reused_for_another_use_case(call, cfg, bank):
@@ -138,9 +163,9 @@ def test_stored_consent_in_use_case_mode(call, cfg, portal, as_partner, pm, uplo
     ask = {"consent_id": consent_id, "consent_partner_id": p.audience,
            "partner_id": PRESENTER, "issue_receipts": True}
 
-    # No use-case policy yet.
-    assert post(call, {**ask, "request_context": ctx()})["reason_code"] == "unknown_partner"
-    pm.grant(p.audience, None, use_cases=[USE_CASE])
+    # No policy for the use case yet.
+    assert post(call, {**ask, "request_context": ctx()})["reason_code"] == "use_case_not_granted"
+    pm.grant_use_cases(p.audience, [USE_CASE])
     body = post(call, {**ask, "request_context": ctx()})
     assert body["decision"] == "permit", body
     assert body["grants"] == {FR: ["farmer_personal_details"], CSR: ["crop_season"]}

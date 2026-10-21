@@ -65,12 +65,15 @@ function UseCaseCard({ u }: { u: UseCaseAccess }) {
       {u.allowed_subject_id_types.length > 0 && (
         <div className="muted">Subject ID types accepted: {u.allowed_subject_id_types.join(", ")}</div>
       )}
+      {u.max_validity_duration && (
+        <div className="muted">Consent valid for at most {u.max_validity_duration}</div>
+      )}
     </div>
   );
 }
 
-// Read-only: what the partner may ask for. At the Exchange, the use cases its
-// use-case policy grants (purpose and data per registry from the Composite);
+// Read-only: what the partner may ask for. At the Exchange, one card per
+// use-case policy (purpose and data per registry from the Composite);
 // elsewhere its data-share policies per registry. Policies are set in Partner
 // Management, not here.
 export default function AccessPage() {
@@ -83,8 +86,9 @@ export default function AccessPage() {
       {byUseCase ? (
         <p className="muted page-intro">
           The use cases your organisation is granted. A consent is asked for one use case: the
-          subject agrees to share the data it needs from each registry, for its purpose. Grants are
-          set in Partner Management; to change one, ask the Partner Management administrator.
+          subject agrees to share the data it needs from each registry, for its purpose. Each use case
+          has its own policy in Partner Management; to change one, ask the Partner Management
+          administrator.
         </p>
       ) : (
         <p className="muted page-intro">

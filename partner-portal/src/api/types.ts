@@ -29,9 +29,10 @@ export interface UseCaseGrant {
   optional_scopes: string[];
 }
 
-// A use case granted to this partner by its use-case policy in Partner
-// Management (at the Exchange), with its purpose and data per registry from the
-// Composite. available=false: no consent can be made for it now (see detail).
+// A use case granted to this partner (at the Exchange): one per use-case policy
+// in Partner Management, with that policy's limits, and the use case's purpose
+// and data per registry from the Composite. available=false: no consent can be
+// made for it now (see detail).
 export interface UseCaseAccess {
   use_case: string; // name@major
   title?: string | null;
@@ -190,6 +191,11 @@ export const CONSENT_STATUSES: ConsentStatus[] = ["active", "revoked", "expired"
 
 export interface ConsentGrant extends Grant {
   effective_data_scopes: string[];
+  // The Partner Management policy the grant was made under (kind:key, e.g.
+  // "use_case:loan-profile@1"), its version and PM's id of that version.
+  policy_version?: number | null;
+  policy_id?: string | null;
+  policy_ref?: string | null;
 }
 
 // How the subject's consent was confirmed, e.g.

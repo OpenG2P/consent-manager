@@ -184,6 +184,10 @@ class ConsentArtefact(BaseORMModelWithId):
     source: Mapped[str] = mapped_column(String(20), default=ArtefactSource.embedded.value)
     # Version of the partner's policy in Partner Management the decision used.
     policy_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # The PM policy applied: PM's id of that version, and its key as
+    # kind:key ("use_case:loan-profile@1" / "data_controller:farmer-registry").
+    policy_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    policy_ref: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
     auth_context_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     # Idempotency / replay: the jti of the embedded object that produced this
@@ -192,7 +196,8 @@ class ConsentArtefact(BaseORMModelWithId):
     # its own decision.
     object_jti: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     # Originated grants consent: [{"data_controller", "data_scopes",
-    # "granted_scopes", "effective_data_scopes", "policy_version"}].
+    # "granted_scopes", "effective_data_scopes", "policy_version", "policy_id",
+    # "policy_ref"}].
     grants: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
     # Originated consent: how the subject confirmed, e.g. {"method": "assisted",
     # "evidence": ["signed_form"], "verified_by", "verified_at",

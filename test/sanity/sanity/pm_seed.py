@@ -51,7 +51,6 @@ def desired_policy(cfg) -> dict:
     return {
         "data_controller": cfg.controller_id,
         "allowed_data_scopes": SANITY_SCOPES,
-        "allowed_use_cases": [],
         "allowed_purposes": [SANITY_PURPOSE],
         "allowed_subject_id_types": [SANITY_SUBJECT_ID_TYPE],
         "allowed_signing_algs": ["EdDSA", "ES256", "RS256"],

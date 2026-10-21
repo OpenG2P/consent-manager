@@ -10,8 +10,8 @@ import { UseCaseFacts } from "./UseCaseFacts";
 
 const BASE_ID_TYPES = ["FAYDA_FAN", "FARMER_ID"];
 
-// New request at the Exchange: the partner picks one of the use cases its
-// use-case policy in Partner Management grants. The purpose and the data per
+// New request at the Exchange: the partner picks one of its use cases (one
+// policy per use case in Partner Management). The purpose and the data per
 // registry are the use case's (shown read-only); the Consent Manager checks the
 // grant again and takes them from the Composite.
 export default function UseCaseRequestForm() {
@@ -41,7 +41,7 @@ export default function UseCaseRequestForm() {
     if (!ref && useCases.length === 1) setRef(useCases[0].use_case);
   }, [ref, useCases]);
 
-  // ID types: those the use-case policy accepts, else those the use case takes.
+  // ID types: those the use case's policy accepts, else those the use case takes.
   const idTypeOptions = useMemo(() => {
     const allowed = useCase?.allowed_subject_id_types ?? [];
     const takes = useCase?.subject_id_types ?? [];

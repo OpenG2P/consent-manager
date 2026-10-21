@@ -127,9 +127,9 @@ class PartnerPortalController(BaseController):
         )
 
     async def access(self, user: PartnerUser = Depends(current_partner_user)):
-        """What the partner may ask for: at the Exchange, the use cases its
-        use-case policy in Partner Management grants (purpose and scopes per
-        registry from the Composite); elsewhere its scope policies."""
+        """What the partner may ask for: at the Exchange, one entry per use-case
+        policy in Partner Management (purpose and scopes per registry from the
+        Composite); elsewhere its scope policies."""
         try:
             view = await self.assisted.access(user.partner_id)
         except LifecycleError as exc:

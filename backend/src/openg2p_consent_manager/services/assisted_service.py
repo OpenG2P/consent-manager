@@ -29,7 +29,7 @@ from .composite_client import EXCHANGE_NEEDS_USE_CASE, consent_by_use_case
 from .evidence_service import EvidenceError, EvidenceService
 from .lifecycle_service import LifecycleError, LifecycleService
 from .partner_service import PartnerService
-from .pm_policy_client import PolicyUnavailable
+from .pm_policy_client import PolicyUnavailable, common_policy_fields, policy_fields
 from .receipt_service import ReceiptService
 from .subject_auth_service import SubjectAuthService
 
@@ -63,9 +63,9 @@ class AssistedConsentService(BaseService):
     # ── Partner: what it may ask for ─────────────────────────────────────────
 
     async def access(self, audience: str) -> dict:
-        """What the partner may ask for. Exchange role: the use cases its
-        use-case policy in Partner Management grants, each with its purpose and
-        per-registry scopes from the Composite. Otherwise: its active scope
+        """What the partner may ask for. Exchange role: one entry per use-case
+        policy of the partner in Partner Management (one per use case), each
+        with the use case's purpose and per-registry scopes from the Composite. Otherwise: its active scope
         policies, one per data controller. Raises LifecycleError(503) when PM
         or (exchange role) the Composite cannot be reached."""
         if consent_by_use_case():
@@ -92,23 +92,29 @@ class AssistedConsentService(BaseService):
         }
 
     async def _use_case_access(self, audience: str) -> list:
-        policy = await self.lifecycle.use_case_policy(audience)
-        if policy is None:
-            return []
-        common = {
-            "allowed_purposes": list(policy.allowed_purposes or []),
-            "allowed_subject_id_types": list(policy.allowed_subject_id_types or []),
-            "max_validity_duration": policy.max_validity_duration,
-            "policy_version": policy.version,
-        }
+        """One entry per use-case policy of the partner in Partner Management:
+        the use case (Composite) with that policy's limits."""
+        try:
+            policies = await self.partners.use_case_policies(audience)
+        except PolicyUnavailable as exc:
+            raise LifecycleError(
+                503, "the partner's policies could not be read from Partner Management"
+            ) from exc
         out = []
-        for ref in policy.allowed_use_cases or []:
+        for policy in policies:
+            ref = policy.use_case
+            limits = {
+                "allowed_purposes": list(policy.allowed_purposes or []),
+                "allowed_subject_id_types": list(policy.allowed_subject_id_types or []),
+                "max_validity_duration": policy.max_validity_duration,
+                "policy_version": policy.version,
+            }
             try:
                 use_case = await self.lifecycle.read_use_case(ref)
             except LifecycleError as exc:
                 if exc.status_code == 503:
                     raise
-                out.append({"use_case": ref, **common, "available": False,
+                out.append({"use_case": ref, **limits, "available": False,
                             "detail": exc.detail})
                 continue
             out.append(
@@ -119,7 +125,7 @@ class AssistedConsentService(BaseService):
                     "purpose": use_case.purpose,
                     "grants": use_case.grants,
                     "subject_id_types": use_case.subject_id_types,
-                    **common,
+                    **limits,
                 }
             )
         return out
@@ -132,8 +138,8 @@ class AssistedConsentService(BaseService):
         and maximum validity — an empty allowed list means any).
 
         Exchange role: always made for ``use_case`` (``grants`` refused)
-        (granted by the partner's use-case policy in Partner Management); the
-        grants and purpose are the Composite's use case, and the use-case
+        (the partner's policy for that use case in Partner Management must
+        exist); the grants and purpose are the Composite's use case, and that
         policy's purposes, subject id types and maximum validity apply."""
         # Exchange role: always by use case, never with explicit grants.
         # Elsewhere: grants checked against scope policies; use_case a label.
@@ -451,7 +457,7 @@ class AssistedConsentService(BaseService):
                         "data_scopes": rg["data_scopes"],
                         "granted_scopes": sorted(rg["data_scopes"]),
                         "effective_data_scopes": effective,
-                        "policy_version": policy.version,
+                        **policy_fields(policy),
                     }
                 )
             if not grants:
@@ -519,7 +525,7 @@ class AssistedConsentService(BaseService):
                 valid_from=valid_from,
                 valid_until=valid_until,
                 source=ArtefactSource.originated.value,
-                policy_version=grants[0]["policy_version"] if len(grants) == 1 else None,
+                **common_policy_fields(grants),
                 assurance=assurance,
                 consent_request_id=req.id,
                 use_case=req.use_case if ceiling is not None else None,

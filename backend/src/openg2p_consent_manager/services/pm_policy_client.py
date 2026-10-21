@@ -5,13 +5,17 @@ Consent Manager only reads the active policies, from PM's internal policy API
 (no auth, internal gateway — like ``/keys``):
 
     GET {partner_mgmt_api_url}/policies/{pm_partner_id}?data_controller=<c>
+    GET {partner_mgmt_api_url}/policies/{pm_partner_id}?use_case=<name@major>
     GET {partner_mgmt_api_url}/policies/{pm_partner_id}
 
-``data_controller=`` (empty) selects the partner's use-case policy (an exchange
-grant, not tied to one registry). PM answers 404 when the partner is unknown or
-not active or has no matching active policy (the same body for every case).
+A partner has one scope policy per data controller (a registry) and one
+use-case policy per use case (an exchange grant, not tied to one registry); no
+filter lists all its active policies. PM answers 404 when the partner is
+unknown or not active or has no matching active policy (the same body for
+every case).
 
-Caching (per pod, per (partner, data controller)), as for partner keys:
+Caching (per pod, per (partner, data controller | use case | all)), as for
+partner keys:
 
 * soft TTL — refresh window: min(PM's ``Cache-Control: max-age``,
   ``partner_policy_cache_ttl_seconds``);
@@ -41,8 +45,10 @@ _config = Settings.get_config()
 _logger = logging.getLogger(_config.logging_default_logger_name)
 
 _MAX_AGE = re.compile(r"(?:^|[,\s])max-age\s*=\s*(\d+)", re.IGNORECASE)
-# Cache key of the "all active policies of a partner" listing.
-_ALL = "\x00all"
+# Cache-key kinds: one scope policy, one use-case policy, all of a partner's.
+_CONTROLLER = "data_controller"
+_USE_CASE = "use_case"
+_ALL = "all"
 
 
 def pm_partner_id(audience: str) -> str:
@@ -64,8 +70,8 @@ class PmPolicy:
     partner_id: str
     data_controller: Optional[str]
     version: int
+    use_case: Optional[str] = None
     allowed_data_scopes: list = field(default_factory=list)
-    allowed_use_cases: list = field(default_factory=list)
     allowed_purposes: list = field(default_factory=list)
     allowed_subject_id_types: list = field(default_factory=list)
     allowed_signing_algs: list = field(default_factory=list)
@@ -78,8 +84,17 @@ class PmPolicy:
 
     @property
     def is_use_case(self) -> bool:
-        """A use-case policy (an exchange grant): no data controller."""
-        return not self.data_controller
+        """A use-case policy (an exchange grant for one use case): no data
+        controller."""
+        return bool(self.use_case) or not self.data_controller
+
+    @property
+    def ref(self) -> str:
+        """The policy's key in PM, as ``kind:key``: ``use_case:loan-profile@1``
+        or ``data_controller:farmer-registry``."""
+        if self.use_case:
+            return f"use_case:{self.use_case}"
+        return f"data_controller:{self.data_controller or ''}"
 
     @classmethod
     def from_pm(cls, data: dict) -> "PmPolicy":
@@ -90,8 +105,8 @@ class PmPolicy:
             partner_id=str(data.get("partner_id") or ""),
             data_controller=data.get("data_controller") or None,
             version=int(data["version"]),
+            use_case=data.get("use_case") or None,
             allowed_data_scopes=strings("allowed_data_scopes"),
-            allowed_use_cases=strings("allowed_use_cases"),
             allowed_purposes=strings("allowed_purposes"),
             allowed_subject_id_types=strings("allowed_subject_id_types"),
             allowed_signing_algs=strings("allowed_signing_algs"),
@@ -104,6 +119,31 @@ class PmPolicy:
             ),
             id=str(data["id"]) if data.get("id") else None,
         )
+
+
+def policy_fields(policy) -> dict:
+    """The full reference of the PM policy (version) a decision or consent
+    used, as stored on decision logs, artefacts and grants: ``policy_version``,
+    ``policy_id`` (PM's id of that version) and ``policy_ref`` (``kind:key``).
+    All None without a policy."""
+    if policy is None:
+        return {"policy_version": None, "policy_id": None, "policy_ref": None}
+    return {
+        "policy_version": policy.version,
+        "policy_id": getattr(policy, "id", None),
+        "policy_ref": getattr(policy, "ref", None),
+    }
+
+
+def common_policy_fields(grants: list) -> dict:
+    """The policy reference shared by all ``grants`` (one grant, or a consent
+    made by use case: every grant under that use case's policy); all None
+    when they differ."""
+    keys = ("policy_version", "policy_id", "policy_ref")
+    refs = {tuple(g.get(k) for k in keys) for g in grants or []}
+    if len(refs) == 1:
+        return dict(zip(keys, refs.pop()))
+    return dict.fromkeys(keys)
 
 
 class _Entry:
@@ -132,21 +172,30 @@ class PmPolicyClient(BaseService):
 
     # ── Public ───────────────────────────────────────────────────────────────
 
-    async def get_policy(
-        self, audience: str, data_controller: Optional[str]
-    ) -> Optional[PmPolicy]:
-        """The partner's active policy for ``data_controller`` (None/"" = its
-        use-case policy). None when PM has none (404). Raises PolicyUnavailable."""
-        controller = data_controller or ""
-        policies = await self._get((pm_partner_id(audience), controller))
+    async def get_policy(self, audience: str, data_controller: str) -> Optional[PmPolicy]:
+        """The partner's active scope policy for ``data_controller``. None when
+        PM has none (404). Raises PolicyUnavailable."""
+        if not data_controller:
+            return None
+        policies = await self._get((pm_partner_id(audience), _CONTROLLER, data_controller))
         return next(
-            (p for p in policies if (p.data_controller or "") == controller), None
+            (p for p in policies if p.data_controller == data_controller and not p.use_case),
+            None,
         )
+
+    async def get_use_case_policy(self, audience: str, use_case: str) -> Optional[PmPolicy]:
+        """The partner's active policy for use case ``use_case`` (``name@major``).
+        None when PM has none (404: the use case is not granted). Raises
+        PolicyUnavailable."""
+        if not use_case:
+            return None
+        policies = await self._get((pm_partner_id(audience), _USE_CASE, use_case))
+        return next((p for p in policies if p.use_case == use_case), None)
 
     async def list_policies(self, audience: str) -> list:
         """All active policies of the partner ([] when PM has none). Raises
         PolicyUnavailable."""
-        return list(await self._get((pm_partner_id(audience), _ALL)))
+        return list(await self._get((pm_partner_id(audience), _ALL, "")))
 
     def invalidate(self, audience: Optional[str] = None) -> None:
         """Drop cached answers (all, or one partner's)."""
@@ -204,11 +253,11 @@ class PmPolicyClient(BaseService):
 
     async def _fetch(self, key: tuple, prev: Optional[_Entry], now: float) -> list:
         base = (_config.partner_mgmt_api_url or "").rstrip("/")
-        pid, controller = key
+        pid, kind, value = key
         if not base:
             return self._on_error(key, prev, now, "partner_mgmt_api_url is not configured")
         url = f"{base}/policies/{quote(pid, safe='')}"
-        params = None if controller == _ALL else {"data_controller": controller}
+        params = None if kind == _ALL else {kind: value}
         try:
             async with httpx.AsyncClient(
                 timeout=_config.partner_policy_fetch_timeout_seconds,

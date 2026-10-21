@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
+import { PolicyRef } from "../components/PolicyRef";
 
 // Operational/audit status view: the append-only log of recent validate
 // decisions (permit/deny + reason). Backed by CM's in-house DecisionLog.
@@ -60,7 +61,14 @@ export default function DecisionsPage() {
                 <td className="muted">
                   {d.data_controller ? <code className="mono">{d.data_controller}</code> : "—"}
                 </td>
-                <td className="muted">{d.policy_version != null ? `v${d.policy_version}` : "—"}</td>
+                <td className="muted">
+                  <PolicyRef
+                    partnerId={d.partner_id}
+                    policyRef={d.policy_ref}
+                    policyVersion={d.policy_version}
+                    policyId={d.policy_id}
+                  />
+                </td>
               </tr>
             ))}
           </tbody>

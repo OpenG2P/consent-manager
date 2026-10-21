@@ -46,8 +46,9 @@ class ReasonCode(str, Enum):
     # Partner Management could not be reached and no policy answer is cached
     # (fail closed; retry later).
     policy_unavailable = "policy_unavailable"
-    # Use-case mode: request_context.use_case is not in the partner's use-case
-    # policy (allowed_use_cases), or the partner has no use-case policy.
+    # Use-case mode: the partner has no policy for request_context.use_case in
+    # Partner Management (one policy per use case), or a stored consent was
+    # given for another use case.
     use_case_not_granted = "use_case_not_granted"
 
 

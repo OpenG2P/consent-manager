@@ -13,6 +13,10 @@ export interface DecisionLog {
   reason_code: string;
   detail?: string | null;
   policy_version?: number | null;
+  // The PM policy applied: PM's id of that version, and its kind:key
+  // ("use_case:loan-profile@1" / "data_controller:farmer-registry").
+  policy_id?: string | null;
+  policy_ref?: string | null;
   created_at: string;
 }
 
@@ -38,6 +42,10 @@ export interface Artefact {
   purpose: Purpose;
   effective_data_scopes: string[];
   grants?: ArtefactGrant[] | null;
+  // The PM policy the consent was made under (all grants' when they share one).
+  policy_version?: number | null;
+  policy_id?: string | null;
+  policy_ref?: string | null;
   status: ConsentStatus;
   source: string;
   valid_from: string;
@@ -56,6 +64,8 @@ export interface ArtefactGrant extends Grant {
   effective_data_scopes: string[];
   granted_scopes?: string[];
   policy_version?: number | null;
+  policy_id?: string | null;
+  policy_ref?: string | null;
 }
 
 export interface Paginated<T> {

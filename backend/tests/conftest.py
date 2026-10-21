@@ -107,8 +107,11 @@ class FakePM:
             return httpx.Response(404, json={"errors": [{"code": "PM-404"}]})
         pid = request.url.path[len(prefix):]
         policies = self.policies.get(pid, {})
-        if "data_controller" in request.url.params:
-            wanted = request.url.params["data_controller"]
+        if "use_case" in request.url.params:
+            wanted = ("use_case", request.url.params["use_case"])
+            items = [policies[wanted]] if wanted in policies else []
+        elif "data_controller" in request.url.params:
+            wanted = ("data_controller", request.url.params["data_controller"])
             items = [policies[wanted]] if wanted in policies else []
         else:
             items = list(policies.values())
@@ -120,23 +123,24 @@ class FakePM:
         return httpx.Response(200, json={"partner_id": pid, "policies": items},
                               headers=headers)
 
-    def grant(self, audience, data_controller, scopes=(), *, use_cases=(), **fields):
+    def grant(self, audience, data_controller, scopes=(), *, use_case=None, **fields):
         """Make ``fields`` the partner's active policy for ``data_controller``
-        (None = its use-case policy). Returns the new version."""
+        (a scope policy) or, with ``use_case``, for that use case (one policy
+        per use case). Returns the new version."""
         from openg2p_consent_manager.services import pm_partner_id
 
         pid = pm_partner_id(audience)
-        key = (pid, data_controller or "")
-        version = self.versions.get(key, 0) + 1
-        self.versions[key] = version
+        key = ("use_case", use_case) if use_case else ("data_controller", data_controller)
+        version = self.versions.get((pid, key), 0) + 1
+        self.versions[(pid, key)] = version
         policy = {
             "id": str(uuid.uuid4()),
             "partner_id": pid,
-            "data_controller": data_controller,
+            "data_controller": None if use_case else data_controller,
+            "use_case": use_case,
             "version": version,
             "status": "active",
-            "allowed_data_scopes": list(scopes),
-            "allowed_use_cases": list(use_cases),
+            "allowed_data_scopes": [] if use_case else list(scopes),
             "allowed_purposes": ["credit-assessment"],
             "allowed_subject_id_types": ["FAYDA_FAN"],
             "allowed_signing_algs": ["EdDSA"],
@@ -147,14 +151,23 @@ class FakePM:
             "effective_from": datetime.now(timezone.utc).isoformat(),
         }
         policy.update(fields)
-        self.policies.setdefault(pid, {})[data_controller or ""] = policy
+        self.policies.setdefault(pid, {})[key] = policy
         self._changed(audience)
         return version
 
-    def revoke(self, audience, data_controller):
+    def grant_use_cases(self, audience, use_cases, **fields):
+        """One use-case policy per use case, each with ``fields``. Returns the
+        last version."""
+        version = None
+        for ref in use_cases:
+            version = self.grant(audience, None, use_case=ref, **fields)
+        return version
+
+    def revoke(self, audience, data_controller=None, *, use_case=None):
         from openg2p_consent_manager.services import pm_partner_id
 
-        self.policies.get(pm_partner_id(audience), {}).pop(data_controller or "", None)
+        key = ("use_case", use_case) if use_case else ("data_controller", data_controller)
+        self.policies.get(pm_partner_id(audience), {}).pop(key, None)
         self._changed(audience)
 
     def _changed(self, audience):

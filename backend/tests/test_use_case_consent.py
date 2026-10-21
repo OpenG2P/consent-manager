@@ -85,7 +85,7 @@ def exchange(cfg, portal, composite):  # noqa: F811
 def bank(pm, new_partner):
     """A partner at the Exchange: a use-case policy only."""
     p = new_partner()
-    pm.grant(p.audience, None, use_cases=[USE_CASE, OTHER])
+    pm.grant_use_cases(p.audience, [USE_CASE, OTHER])
     return p
 
 
@@ -119,7 +119,8 @@ def present(call, consent_id, audience, use_case=USE_CASE, scopes=None):
 
 def test_access_lists_granted_use_cases(exchange, as_partner, pm, new_partner):
     p = new_partner()
-    pm.grant(p.audience, None, use_cases=[USE_CASE, "gone@2"], max_validity_duration="P6M")
+    pm.grant_use_cases(p.audience, [USE_CASE, "gone@2"], max_validity_duration="P6M")
+    pm.grant(p.audience, None, use_case=OTHER, allowed_purposes=["insurance"])
     pc = as_partner(p.audience)
     status, access = pc("GET", "/access")
     assert status == 200, access
@@ -134,6 +135,10 @@ def test_access_lists_granted_use_cases(exchange, as_partner, pm, new_partner):
     assert csr["required_scopes"] == ["crop_season"] and csr["optional_scopes"] == ["measures"]
     assert loan["max_validity_duration"] == "P6M" and loan["policy_version"] == 1
     assert by["gone@2"]["available"] is False and "not published" in by["gone@2"]["detail"]
+    # One entry per use-case policy, each with its own limits.
+    assert sorted(by) == sorted([USE_CASE, "gone@2", OTHER])
+    assert by[OTHER]["allowed_purposes"] == ["insurance"]
+    assert by[OTHER]["max_validity_duration"] == "P1Y"
     assert pc("GET", "/request-settings")[1]["consent_by"] == "use_case"
 
 
@@ -202,10 +207,10 @@ def test_portal_use_case_checks(exchange, as_partner, pm, bank):
     exchange.use_cases.pop(OTHER)
     status, body = create(pc, use_case=OTHER)
     assert status == 422 and "not published" in body["error"]
-    pm.grant(bank.audience, None, use_cases=[USE_CASE], allowed_subject_id_types=["PHONE"])
+    pm.grant_use_cases(bank.audience, [USE_CASE], allowed_subject_id_types=["PHONE"])
     status, body = create(pc)
     assert status == 422 and "subject_not_allowed" in body["error"]
-    pm.grant(bank.audience, None, use_cases=[USE_CASE], max_validity_duration="P7D")
+    pm.grant_use_cases(bank.audience, [USE_CASE], max_validity_duration="P7D")
     status, body = create(pc, validity={"valid_until": "2099-01-01T00:00:00Z"})
     assert status == 422 and "validity_exceeds_policy" in body["error"]
 
@@ -262,7 +267,7 @@ def test_approval_needs_the_use_case_still_granted(call, exchange, as_partner, p
     status, req = create(pc)
     assert upload(pc, req["id"])[0] == 201
     assert pc("POST", f"/consent-requests/{req['id']}/submit")[0] == 200
-    pm.grant(bank.audience, None, use_cases=[OTHER])
+    pm.revoke(bank.audience, use_case=USE_CASE)
     status, body = call("POST", f"{STAFF}/{req['id']}/approve", json={"note": "ok"})
     assert status == 422 and "use_case_not_granted" in body["error"]
 

@@ -23,7 +23,7 @@ from ..schemas.verification import ConsentObject, Decision, ValidateRequest
 from ..utils.canonical import b64url_decode, iso_duration_to_timedelta, sha256_hex
 from .exchange_service import RECEIPT_TYP, ExchangeService, to_datetime
 from .partner_service import PartnerService
-from .pm_policy_client import PolicyUnavailable
+from .pm_policy_client import PolicyUnavailable, policy_fields
 from .policy_service import PolicyService
 from .receipt_service import ReceiptService
 
@@ -136,11 +136,12 @@ class VerificationService(BaseService):
 
         # 2. Known party — the partner's active policy in Partner Management
         #    (cached): its scope policy for this controller or, in use-case
-        #    mode, its use-case policy.
+        #    mode, its policy for the use case.
         use_case_mode = self._use_case_mode(parsed)
         try:
             material = await self.partners.get_verification_material(
-                obj.aud, None if use_case_mode else controller
+                obj.aud, controller,
+                use_case=parsed.request_context.use_case if use_case_mode else None,
             )
         except PolicyUnavailable:
             return await self._deny(
@@ -148,18 +149,22 @@ class VerificationService(BaseService):
                 "the partner's policy could not be read from Partner Management",
                 now, ctx_hash, jti=obj.jti, data_controller=controller,
             )
+        if material is None and use_case_mode:
+            return await self._deny(
+                ReasonCode.use_case_not_granted,
+                f"partner has no active policy for use case "
+                f"'{parsed.request_context.use_case}' in Partner Management",
+                now, ctx_hash, jti=obj.jti, data_controller=controller,
+            )
         if material is None:
             return await self._deny(
                 ReasonCode.unknown_partner,
-                "partner has no active use-case policy in Partner Management"
-                if use_case_mode else
                 f"partner has no active policy for data_controller '{controller}' in "
                 f"Partner Management (unknown, inactive or not granted)",
                 now, ctx_hash, jti=obj.jti, data_controller=controller,
             )
         partner = material["partner"]
         policy = material["policy"]
-        policy_version = policy.version
 
         # 3. Signature — verify the consent JWS against the partner's key from
         # Partner Management. The shared helper reads the kid from the JWS header,
@@ -170,7 +175,7 @@ class VerificationService(BaseService):
             return await self._deny(
                 ReasonCode.signature_invalid, "signing algorithm not permitted",
                 now, ctx_hash, partner_id=partner.audience, jti=obj.jti,
-                data_controller=controller, policy_version=policy_version,
+                data_controller=controller, policy=policy,
             )
         try:
             verified = await self.crypto_helper.verify_jwt(jws, km_ref_id=partner.partner_mgmt_id)
@@ -182,10 +187,10 @@ class VerificationService(BaseService):
                 ReasonCode.signature_invalid,
                 "signature did not verify (or no verifying key from partner management)",
                 now, ctx_hash, partner_id=partner.audience, jti=obj.jti,
-                data_controller=controller, policy_version=policy_version,
+                data_controller=controller, policy=policy,
             )
 
-        # 3b. Use-case mode — the use case must be granted to the partner, and the
+        # 3b. Use-case mode — the policy must be the use case's, and the
         #     consent given for the purpose it serves. Checked before a stored
         #     decision is reused: the same consent may be presented for another
         #     use case.
@@ -197,7 +202,7 @@ class VerificationService(BaseService):
                 return await self._deny(
                     refusal.reason, refusal.detail, now, ctx_hash,
                     partner_id=partner.audience, jti=obj.jti, data_controller=controller,
-                    policy_version=policy_version,
+                    policy=policy,
                 )
 
         # Idempotency: the same object (jti) presented again for the same
@@ -218,7 +223,7 @@ class VerificationService(BaseService):
                 return await self._deny(
                     ReasonCode.replay, "jti already used for a different consent",
                     now, ctx_hash, partner_id=partner.audience, jti=obj.jti,
-                    data_controller=controller, policy_version=policy_version,
+                    data_controller=controller, policy=policy,
                 )
             if self._subject_mismatch(
                 ctx_subject, existing.subject_id_type, existing.subject_id_value
@@ -237,7 +242,7 @@ class VerificationService(BaseService):
             return await self._deny(
                 ReasonCode.replay, "issued_at outside freshness window",
                 now, ctx_hash, partner_id=partner.audience, jti=obj.jti,
-                data_controller=controller, policy_version=policy_version,
+                data_controller=controller, policy=policy,
             )
 
         # 4–8. Policy evaluation (audience, subject, purpose, scope, validity).
@@ -246,7 +251,7 @@ class VerificationService(BaseService):
             return await self._deny(
                 result.reason, result.detail, now, ctx_hash,
                 partner_id=partner.audience, jti=obj.jti,
-                policy_version=result.policy_version, data_controller=controller,
+                policy=policy, data_controller=controller,
             )
 
         # Permit — mint canonical artefact + signed receipt + decision log for
@@ -406,7 +411,7 @@ class VerificationService(BaseService):
         )
         # Each grant is narrowed to the partner's CURRENT policy in Partner
         # Management: its scope policy for the controller or, in use-case mode,
-        # its use-case policy (whose ceiling is the requested scopes).
+        # its policy for the use case (whose ceiling is the requested scopes).
         use_case_mode = self._use_case_mode(parsed)
         granted: dict[str, tuple[list, Optional[int]]] = {}
         if (
@@ -423,11 +428,15 @@ class VerificationService(BaseService):
             )
         try:
             if use_case_mode:
-                material = await self.partners.get_verification_material(audience, None)
+                use_case = parsed.request_context.use_case
+                material = await self.partners.get_verification_material(
+                    audience, None, use_case=use_case
+                )
                 if material is None:
                     return await self._deny(
-                        ReasonCode.unknown_partner,
-                        "partner has no active use-case policy in Partner Management",
+                        ReasonCode.use_case_not_granted,
+                        f"partner has no active policy for use case '{use_case}' "
+                        "in Partner Management",
                         now, ctx_hash, data_controller=parsed.data_controller, **log,
                     )
                 policy = material["policy"]
@@ -438,7 +447,7 @@ class VerificationService(BaseService):
                     return await self._deny(
                         refusal.reason, refusal.detail, now, ctx_hash,
                         data_controller=parsed.data_controller,
-                        policy_version=policy.version, **log,
+                        policy=policy, **log,
                     )
             for g in stored:
                 controller = g.get("data_controller")
@@ -458,7 +467,7 @@ class VerificationService(BaseService):
                 if requested is not None:
                     effective &= requested
                 if effective:
-                    granted[controller] = (sorted(effective), policy.version)
+                    granted[controller] = (sorted(effective), policy)
         except PolicyUnavailable:
             return await self._deny(
                 ReasonCode.policy_unavailable,
@@ -478,17 +487,17 @@ class VerificationService(BaseService):
                 decision="permit", reason_code=ReasonCode.ok, consent_id=artefact.id,
                 subject_id=subject, data_controller=controller,
                 effective_data_scopes=scopes, valid_until=artefact.valid_until,
-                policy_version=version, evaluated_at=now,
+                **policy_fields(policy), evaluated_at=now,
             )
-            for controller, (scopes, version) in granted.items()
+            for controller, (scopes, policy) in granted.items()
         }
         async with async_session()() as session:
-            for controller, (_, version) in granted.items():
+            for controller, (_, policy) in granted.items():
                 session.add(
                     DecisionLog(
                         partner_id=audience, consent_id=artefact.id,
                         data_controller=controller, decision="permit",
-                        reason_code=ReasonCode.ok.value, policy_version=version,
+                        reason_code=ReasonCode.ok.value, **policy_fields(policy),
                         request_ctx_hash=ctx_hash,
                     )
                 )
@@ -697,7 +706,7 @@ class VerificationService(BaseService):
         if not result.permit:
             return await self._deny(
                 result.reason, result.detail, now, ctx_hash, partner_id=partner.audience,
-                policy_version=result.policy_version, **log,
+                policy=material["policy"], **log,
             )
         # 5. The normal decision; the artefact lives no longer than the token.
         return await self._permit(
@@ -712,7 +721,8 @@ class VerificationService(BaseService):
     def _use_case_mode(parsed: ValidateRequest) -> bool:
         """Use-case mode: the caller is a configured receipt presenter (the
         Composite) and names the use case it serves. The consenting partner's
-        use-case policy then replaces its per-registry scope policies."""
+        policy for that use case then replaces its per-registry scope
+        policies."""
         ctx = parsed.request_context
         return bool(
             ctx is not None
@@ -723,7 +733,7 @@ class VerificationService(BaseService):
 
     def _stored_use_case_refusal(self, policy, request_context, artefact):
         """Use-case mode for a stored consent: the checks the policy evaluation
-        applies to a signed consent — use case granted and purpose, then the
+        applies to a signed consent — the use case's policy and purpose, then the
         policy's purposes, subject id types and maximum validity."""
         from .policy_service import PolicyResult
 
@@ -823,6 +833,7 @@ class VerificationService(BaseService):
             data_controller=artefact.controller_id,
             effective_data_scopes=artefact.effective_data_scopes,
             valid_until=artefact.valid_until, policy_version=artefact.policy_version,
+            policy_id=artefact.policy_id, policy_ref=artefact.policy_ref,
             evaluated_at=now,
         )
 
@@ -847,6 +858,7 @@ class VerificationService(BaseService):
             valid_until=valid_until or _aware(obj.validity.valid_until),
             source=source,
             policy_version=result.policy_version,
+            policy_id=result.policy_id, policy_ref=result.policy_ref,
             object_jti=obj.jti,
             status=ArtefactStatus.active.value,
         )
@@ -860,7 +872,8 @@ class VerificationService(BaseService):
                     partner_id=partner.audience, consent_id=artefact.id, object_jti=obj.jti,
                     data_controller=grant.data_controller,
                     decision="permit", reason_code=ReasonCode.ok.value,
-                    policy_version=result.policy_version, request_ctx_hash=ctx_hash,
+                    policy_version=result.policy_version, policy_id=result.policy_id,
+                    policy_ref=result.policy_ref, request_ctx_hash=ctx_hash,
                     receipt_jti=receipt_jti, receipt_issuer=receipt_issuer,
                 )
             )
@@ -884,6 +897,7 @@ class VerificationService(BaseService):
             data_controller=grant.data_controller,
             effective_data_scopes=result.effective_scopes,
             valid_until=artefact.valid_until, policy_version=result.policy_version,
+            policy_id=result.policy_id, policy_ref=result.policy_ref,
             evaluated_at=now,
         )
 
@@ -892,8 +906,13 @@ class VerificationService(BaseService):
         partner_id: Optional[str] = None, jti: Optional[str] = None,
         policy_version: Optional[int] = None, data_controller: Optional[str] = None,
         receipt_jti: Optional[str] = None, receipt_issuer: Optional[str] = None,
-        consent_id: Optional[str] = None,
+        consent_id: Optional[str] = None, policy=None,
     ) -> Decision:
+        """Log and return a deny. ``policy``: the PM policy evaluated, recorded
+        with its full reference (version, PM id, kind:key)."""
+        refs = policy_fields(policy)
+        if policy_version is not None:
+            refs["policy_version"] = policy_version
         async with async_session()() as session:
             session.add(
                 DecisionLog(
@@ -901,7 +920,7 @@ class VerificationService(BaseService):
                     data_controller=data_controller,
                     decision="deny",
                     reason_code=reason.value, detail=detail,
-                    policy_version=policy_version, request_ctx_hash=ctx_hash,
+                    **refs, request_ctx_hash=ctx_hash,
                     receipt_jti=receipt_jti, receipt_issuer=receipt_issuer,
                 )
             )

@@ -14,8 +14,8 @@ class ConsentRequestCreate(BaseModel):
     against the partner's policy for that controller in Partner Management.
 
     Exchange role: ``use_case`` (``name@major``) instead — the request is made
-    for that use case, granted to the partner by its use-case policy in
-    Partner Management; the grants and purpose are the Composite's use case
+    for that use case, for which the partner must have a policy in Partner
+    Management; the grants and purpose are the Composite's use case
     (``purpose``, if given, must be the use case's)."""
 
     subject_id: SubjectId
@@ -120,6 +120,11 @@ class ArtefactResponse(BaseModel):
     consent_request_id: Optional[str] = None
     # Exchange role: the use case the consent was made for (presentable only for it).
     use_case: Optional[str] = None
+    # The PM policy the consent was made under (all grants' when they share
+    # one): version, PM's id of that version and its kind:key.
+    policy_version: Optional[int] = None
+    policy_id: Optional[str] = None
+    policy_ref: Optional[str] = None
     status: str
     source: str
     valid_from: datetime

@@ -156,6 +156,16 @@ class Initializer(BaseInitializer):
                         "data_controller VARCHAR(255)"
                     )
                 )
+                # The full reference of the PM policy applied (id + kind:key).
+                for table in ("decision_logs", "consent_artefacts"):
+                    for column, ddl in (("policy_id", "VARCHAR(64)"),
+                                        ("policy_ref", "VARCHAR(300)")):
+                        await conn.execute(
+                            text(
+                                f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS "
+                                f"{column} {ddl}"
+                            )
+                        )
                 # Agri Stack exchange: the consent token a decision was made
                 # on (department role). NULL for every other decision.
                 for column in ("receipt_jti", "receipt_issuer"):

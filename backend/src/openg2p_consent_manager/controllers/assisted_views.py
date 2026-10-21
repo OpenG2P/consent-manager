@@ -63,6 +63,9 @@ def consent_view(artefact, use_cases: dict) -> PartnerConsentResponse:
                 data_controller=g.get("data_controller"),
                 data_scopes=g.get("data_scopes") or [],
                 effective_data_scopes=g.get("effective_data_scopes") or [],
+                policy_version=g.get("policy_version"),
+                policy_id=g.get("policy_id"),
+                policy_ref=g.get("policy_ref"),
             )
             for g in artefact.grants
         ]
@@ -72,6 +75,9 @@ def consent_view(artefact, use_cases: dict) -> PartnerConsentResponse:
                 data_controller=artefact.controller_id,
                 data_scopes=artefact.data_scopes or [],
                 effective_data_scopes=artefact.effective_data_scopes or [],
+                policy_version=artefact.policy_version,
+                policy_id=artefact.policy_id,
+                policy_ref=artefact.policy_ref,
             )
         ]
     return PartnerConsentResponse(

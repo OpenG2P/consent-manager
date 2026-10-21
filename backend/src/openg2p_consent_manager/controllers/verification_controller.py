@@ -66,12 +66,12 @@ permit `consent_id`, `receipt_id`, `subject_id` (the consent's subject),
   this CM's JWKS.
 - Use-case mode — a caller in `receipt_presenters` (the Composite) that sends
   `request_context.use_case` (`name@major`, e.g. `loan-profile@1`): instead of
-  the partner's per-registry scope policies, its **use-case policy** in Partner
-  Management applies (deny `unknown_partner` if it has none). The use case must
-  be in its `allowed_use_cases` (deny `use_case_not_granted`); the consent's
-  purpose must equal `request_context.purpose` when sent and be one the policy
-  allows (`purpose_not_allowed`); the policy's subject id types, signing
-  algorithms and maximum validity apply. Per registry, effective scopes =
+  the partner's per-registry scope policies, its **policy for that use case**
+  in Partner Management applies (one policy per use case; deny
+  `use_case_not_granted` if it has none). The consent's purpose must equal
+  `request_context.purpose` when sent and be one the policy allows
+  (`purpose_not_allowed`); the policy's subject id types, signing algorithms
+  and maximum validity apply. Per registry, effective scopes =
   consent grant ∩ `requested_scopes` (the use case's scopes). Without
   `use_case`, the partner's scope policies apply as above.
 - A consent token as `consent_jws` (department role) — accepted only from a
@@ -87,7 +87,7 @@ active (`revoked` / `expired` / `not_yet_valid`), obtained by
 `consent_partner_id` (`partner_mismatch`) and for the subject in
 `request_context.subject_id` (`subject_mismatch`). Per grant, effective scopes
 = the consent's effective scopes ∩ the partner's CURRENT policy for that
-controller in Partner Management (in use-case mode: its use-case policy, as
+controller in Partner Management (in use-case mode: its policy for the use case, as
 above) ∩ `requested_scopes`; a controller left with none is not granted.
 The permit carries `grants: {data_controller: [scopes]}` (also returned with
 `issue_receipts`); with `issue_receipts`, one receipt per granted controller.

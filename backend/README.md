@@ -35,8 +35,9 @@ subject_id, use_case, purpose}`:
   No policy: `unknown_partner`; PM unreachable and nothing cached:
   `policy_unavailable`.
 - Use-case mode (a configured receipt presenter sending
-  `request_context.use_case`): the partner's use-case policy in PM applies
-  instead; the use case must be granted (`use_case_not_granted`).
+  `request_context.use_case`): the partner's policy for that use case in PM
+  (`?use_case=name@major`; one policy per use case) applies instead; none:
+  `use_case_not_granted`.
 - `request_context.subject_id` of the consent subject's type but another value
   is denied `subject_mismatch`.
 - Replay/idempotency is per (`jti`, `data_controller`): each registry gets its
@@ -49,8 +50,9 @@ the Consent Manager keeps none.
 Originated consents (`/consent-requests`) may carry `grants` too, and the
 subject approves each controller's scopes. In the exchange role
 (`receipt_issuer` and `receipt_presenters` set), a consent request (lifecycle
-or partner portal) must name a `use_case` (`name@major`) granted by the
-partner's use-case policy in PM (explicit grants are refused, `400`): its grants and purpose are the use case's,
+or partner portal) must name a `use_case` (`name@major`) for which the
+partner has a policy in PM (else `422 use_case_not_granted`; explicit grants are
+refused, `400`): its grants and purpose are the use case's,
 read from the Composite (`CONSENT_MANAGER_COMPOSITE_API_URL`, `GET
 /composite/v1/use-cases/{ref}`; unreachable → 503), and the consent is
 presentable in use-case mode only for that use case. They cannot yet be presented at

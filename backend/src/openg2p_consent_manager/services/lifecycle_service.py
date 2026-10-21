@@ -26,7 +26,7 @@ from .composite_client import (
     consent_by_use_case,
 )
 from .partner_service import PartnerService
-from .pm_policy_client import PolicyUnavailable
+from .pm_policy_client import PolicyUnavailable, common_policy_fields, policy_fields
 from .receipt_service import ReceiptService
 
 _config = Settings.get_config()
@@ -60,7 +60,7 @@ class LifecycleService(BaseService):
 
         Exchange role: the request must name a ``use_case`` and is made for it
         — its grants and purpose are the Composite's use case, within the
-        partner's use-case policy (see ``resolve_use_case``)."""
+        partner's policy for that use case (see ``resolve_use_case``)."""
         if consent_by_use_case() and data.use_case is None:
             raise LifecycleError(400, EXCHANGE_NEEDS_USE_CASE)
         if data.use_case is not None:
@@ -135,10 +135,19 @@ class LifecycleService(BaseService):
 
     # ── Exchange role: consent by use case ──────────────────────────────────
 
-    async def use_case_policy(self, audience: str):
-        """The partner's use-case policy in Partner Management, or None. Raises
-        LifecycleError(503) when PM cannot be reached."""
-        return await self.current_policy(audience, None)
+    async def use_case_policy(self, audience: str, ref: str):
+        """The partner's policy for use case ``ref`` in Partner Management, or
+        None (not granted). Raises LifecycleError(503) when PM cannot be
+        reached."""
+        try:
+            material = await self.partners.get_verification_material(
+                audience, None, use_case=ref
+            )
+        except PolicyUnavailable as exc:
+            raise LifecycleError(
+                503, "the partner's policy could not be read from Partner Management"
+            ) from exc
+        return material["policy"] if material else None
 
     async def read_use_case(self, ref: str):
         """The Composite's published use case ``ref``. Raises LifecycleError:
@@ -168,12 +177,13 @@ class LifecycleService(BaseService):
         return use_case
 
     async def granted_use_case(self, audience: str, ref: str):
-        """(use-case policy, use case) when the partner's use-case policy grants
-        ``ref``. Raises LifecycleError (422 use_case_not_granted; 503)."""
+        """(the use case's policy, use case) when the partner has a policy for
+        ``ref`` in Partner Management. Raises LifecycleError (422
+        use_case_not_granted; 503)."""
         if not ref or not USE_CASE_REF.match(ref):
             raise LifecycleError(422, "use_case must be name@major, e.g. loan-profile@1")
-        policy = await self.use_case_policy(audience)
-        if policy is None or ref not in (policy.allowed_use_cases or []):
+        policy = await self.use_case_policy(audience, ref)
+        if policy is None:
             raise LifecycleError(
                 422,
                 f"use_case_not_granted: use case '{ref}' is not granted to the partner "
@@ -185,8 +195,8 @@ class LifecycleService(BaseService):
         self, audience: str, ref: str, subject_id_type: str,
         purpose_code: Optional[str] = None, valid_from=None, valid_until=None,
     ):
-        """A consent for use case ``ref``: granted by the partner's use-case
-        policy; its grants (controller → the use case's scopes) and purpose are
+        """A consent for use case ``ref``: granted by the partner's policy for
+        that use case; its grants (controller → the use case's scopes) and purpose are
         the Composite's use case; the policy's purposes, subject ID types and
         maximum validity apply. Returns (use case, policy, grants)."""
         policy, use_case = await self.granted_use_case(audience, ref)
@@ -198,14 +208,14 @@ class LifecycleService(BaseService):
             )
         if policy.allowed_purposes and use_case.purpose not in policy.allowed_purposes:
             raise LifecycleError(
-                422, f"purpose_not_allowed: '{use_case.purpose}' by the use-case policy"
+                422, f"purpose_not_allowed: '{use_case.purpose}' by the use case's policy"
             )
         if (
             policy.allowed_subject_id_types
             and subject_id_type not in policy.allowed_subject_id_types
         ):
             raise LifecycleError(
-                422, f"subject_not_allowed: '{subject_id_type}' by the use-case policy"
+                422, f"subject_not_allowed: '{subject_id_type}' by the use case's policy"
             )
         if valid_until is not None and policy.max_validity_duration:
             try:
@@ -214,12 +224,12 @@ class LifecycleService(BaseService):
                 limit = None
             start = _aware(valid_from) if valid_from else datetime.now(timezone.utc)
             if limit is not None and _aware(valid_until) - start > limit:
-                raise LifecycleError(422, "validity_exceeds_policy: by the use-case policy")
+                raise LifecycleError(422, "validity_exceeds_policy: by the use case's policy")
         grants = [
             {
                 "data_controller": g["data_controller"],
                 "data_scopes": list(g["data_scopes"]),
-                "policy_version": policy.version,
+                **policy_fields(policy),
                 # Marks a grant made by use case (approval narrows to it).
                 "use_case": use_case.ref,
             }
@@ -274,7 +284,7 @@ class LifecycleService(BaseService):
                     {
                         "data_controller": g.data_controller,
                         "data_scopes": list(g.data_scopes),
-                        "policy_version": policy.version,
+                        **policy_fields(policy),
                     },
                     policy,
                 )
@@ -373,7 +383,7 @@ class LifecycleService(BaseService):
                 valid_from=valid_from,
                 valid_until=valid_until,
                 source=ArtefactSource.originated.value,
-                policy_version=policy.version if policy else None,
+                **policy_fields(policy),
                 auth_context_id=ctx.id,
                 consent_request_id=req.id,
                 status=ArtefactStatus.active.value,
@@ -453,7 +463,7 @@ class LifecycleService(BaseService):
                     "data_scopes": rg["data_scopes"],
                     "granted_scopes": sorted(scopes),
                     "effective_data_scopes": effective,
-                    "policy_version": policy.version if policy else None,
+                    **policy_fields(policy),
                 }
             )
         if not grants:
@@ -483,7 +493,7 @@ class LifecycleService(BaseService):
             valid_from=req.valid_from or now,
             valid_until=req.valid_until or (now + default_validity),
             source=ArtefactSource.originated.value,
-            policy_version=grants[0]["policy_version"] if len(grants) == 1 else None,
+            **common_policy_fields(grants),
             auth_context_id=ctx.id,
             consent_request_id=req.id,
             use_case=req.use_case if ceiling is not None else None,

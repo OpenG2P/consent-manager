@@ -121,8 +121,9 @@ class Settings(BaseSettings):
     # ── Partner access policies (Partner Management service) ────────────────
     # What a partner may access is its policy in PM, read from PM's internal
     # policy API: GET {partner_mgmt_api_url}/policies/PARTNER_<AUD>
-    # ?data_controller=<controller> (empty = its use-case policy). Cached per
-    # pod and per (partner, controller), as the keys are.
+    # ?data_controller=<controller> (a scope policy) or ?use_case=<name@major>
+    # (one use-case policy per use case). Cached per pod and per (partner,
+    # controller | use case), as the keys are.
     # Soft TTL: refresh window; capped by PM's Cache-Control max-age when smaller.
     partner_policy_cache_ttl_seconds: int = 60
     # Hard TTL: while PM is unreachable, serve its last answer up to this age,
@@ -173,8 +174,8 @@ class Settings(BaseSettings):
     receipt_fetch_timeout_seconds: float = 3.0
     # Exchange role (receipt_issuer and receipt_presenters set): consents made
     # here through the partner portal or the lifecycle API are made for a use
-    # case (`name@major`) granted to the partner in its Partner Management
-    # use-case policy. The use case's purpose and per-registry scopes are read
+    # case (`name@major`) for which the partner has a policy in Partner
+    # Management (one policy per use case). The use case's purpose and per-registry scopes are read
     # from the Composite: GET {composite_api_url}/composite/v1/use-cases/{ref}.
     # Empty → such consents cannot be made (503, fail closed).
     composite_api_url: str = ""  # e.g. http://agri-composite-api

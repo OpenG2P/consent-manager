@@ -90,9 +90,9 @@ class RequestContext(BaseModel):
     subject_id: Optional[SubjectId] = None
     # Use-case mode (exchange role): the use case the caller (a configured
     # receipt presenter, e.g. the Composite) serves, as `name@major`
-    # (loan-profile@1). The consenting partner's use-case policy in Partner
-    # Management must grant it; it replaces the partner's per-registry scope
-    # policies. Ignored for any other caller.
+    # (loan-profile@1). The consenting partner's policy for this use case in
+    # Partner Management must exist (else use_case_not_granted); it replaces the
+    # partner's per-registry scope policies. Ignored for any other caller.
     use_case: Optional[str] = Field(None, max_length=255, examples=["loan-profile@1"])
     # Use-case mode: the purpose the use case serves; the consent's purpose code
     # must equal it.
@@ -139,6 +139,10 @@ class DecisionLogResponse(BaseModel):
     reason_code: str
     detail: Optional[str] = None
     policy_version: Optional[int] = None
+    # The PM policy applied: PM's id of that version and its key (kind:key,
+    # e.g. use_case:loan-profile@1 or data_controller:farmer-registry).
+    policy_id: Optional[str] = None
+    policy_ref: Optional[str] = None
     receipt_jti: Optional[str] = None
     receipt_issuer: Optional[str] = None
     created_at: datetime
@@ -157,6 +161,9 @@ class Decision(BaseModel):
     effective_data_scopes: Optional[List[str]] = None
     valid_until: Optional[datetime] = None
     policy_version: Optional[int] = None
+    # The PM policy applied (permit): PM's id of that version and its kind:key.
+    policy_id: Optional[str] = None
+    policy_ref: Optional[str] = None
     evaluated_at: datetime
     # Exchange role, issue_receipts=true and permit: {data_controller: consent token JWS}.
     receipts: Optional[Dict[str, str]] = None

@@ -20,6 +20,9 @@ class PolicyResult:
     detail: Optional[str] = None
     effective_scopes: List[str] = field(default_factory=list)
     policy_version: Optional[int] = None
+    # The PM policy evaluated: PM's id of that version and its kind:key.
+    policy_id: Optional[str] = None
+    policy_ref: Optional[str] = None
 
 
 def _aware(dt: datetime) -> datetime:
@@ -36,13 +39,13 @@ class PolicyService(BaseService):
     """
 
     def check_use_case(self, policy, request_context, purpose_code) -> Optional[PolicyResult]:
-        """Use-case mode gate: the partner's use-case policy must grant
-        ``request_context.use_case``, and the consent's purpose must be the one
-        the use case serves (``request_context.purpose``, when given). None if
-        both hold."""
+        """Use-case mode gate: ``policy`` must be the partner's policy for
+        ``request_context.use_case`` (one policy per use case in Partner
+        Management), and the consent's purpose must be the one the use case
+        serves (``request_context.purpose``, when given). None if both hold."""
         version = policy.version
         use_case = request_context.use_case
-        if use_case not in (policy.allowed_use_cases or []):
+        if not use_case or getattr(policy, "use_case", None) != use_case:
             return PolicyResult(
                 False, ReasonCode.use_case_not_granted,
                 f"use case '{use_case}' is not granted to the partner in Partner Management",
@@ -68,9 +71,20 @@ class PolicyService(BaseService):
     def evaluate(
         self, consent_object, material, request_context, grant=None
     ) -> PolicyResult:
+        """See ``_evaluate``; the result carries the policy's full reference."""
+        result = self._evaluate(consent_object, material, request_context, grant)
+        policy = (material or {}).get("policy")
+        if policy is not None:
+            result.policy_id = getattr(policy, "id", None)
+            result.policy_ref = getattr(policy, "ref", None)
+        return result
+
+    def _evaluate(
+        self, consent_object, material, request_context, grant=None
+    ) -> PolicyResult:
         """Evaluate one grant of ``consent_object`` against the partner's policy
         in ``material`` (from Partner Management): its scope policy for that
-        grant's controller or, in use-case mode, its use-case policy (no
+        grant's controller or, in use-case mode, its policy for the use case (no
         controller; the scope ceiling is then the consent itself ∩ the
         requested scopes). ``grant`` defaults to the consent's legacy single
         grant."""

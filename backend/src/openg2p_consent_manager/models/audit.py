@@ -30,6 +30,10 @@ class DecisionLog(BaseORMModelWithId):
     detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Version of the partner's policy in Partner Management that was applied.
     policy_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # The PM policy applied: PM's id of that version, and its key as
+    # kind:key ("use_case:loan-profile@1" / "data_controller:farmer-registry").
+    policy_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    policy_ref: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
     # Hash of the request context — proves what was evaluated without storing PII.
     request_ctx_hash: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     # Department role: the exchange consent token this decision was made on.

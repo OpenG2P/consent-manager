@@ -39,7 +39,7 @@ class UseCaseGrantView(BaseModel):
 
 
 class UseCaseAccessView(BaseModel):
-    """A use case granted to the partner by its use-case policy in Partner
+    """A use case granted to the partner: one per use-case policy in Partner
     Management, with its purpose and per-registry scopes from the Composite.
     ``available`` is false (with ``detail``) when no consent can be made for it
     now, e.g. the Composite does not publish it."""
@@ -51,7 +51,7 @@ class UseCaseAccessView(BaseModel):
     grants: List[UseCaseGrantView] = []
     # The subject ID types the use case takes (Composite).
     subject_id_types: List[str] = []
-    # From the partner's use-case policy.
+    # From the partner's policy for this use case.
     allowed_purposes: List[str] = []
     allowed_subject_id_types: List[str] = []
     max_validity_duration: Optional[str] = None
@@ -255,6 +255,11 @@ class ConsentGrantView(BaseModel):
     data_controller: Optional[str] = None
     data_scopes: List[str]
     effective_data_scopes: List[str]
+    # The PM policy the grant was made under: version, PM's id of that
+    # version and its kind:key.
+    policy_version: Optional[int] = None
+    policy_id: Optional[str] = None
+    policy_ref: Optional[str] = None
 
 
 class PartnerConsentResponse(BaseModel):
