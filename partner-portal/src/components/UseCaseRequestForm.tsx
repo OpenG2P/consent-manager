@@ -5,6 +5,7 @@ import { api, ApiError } from "../api/client";
 import { useAccess, useRequestSettings } from "../api/hooks";
 import type { ConsentRequestCreate } from "../api/types";
 import { dayEnd, dayStart, today } from "../format";
+import { CodeSelect, codeLabels } from "./FormControls";
 import { ErrorNotice } from "./Status";
 import { UseCaseFacts } from "./UseCaseFacts";
 
@@ -41,14 +42,16 @@ export default function UseCaseRequestForm() {
     if (!ref && useCases.length === 1) setRef(useCases[0].use_case);
   }, [ref, useCases]);
 
-  // ID types: those the use case's policy accepts, else those the use case takes.
+  // ID types: those the use case's policy accepts, else those the use case
+  // takes, else the Master Data list (labels from it in every case).
+  const mdsIdTypes = settings.data?.subject_id_types ?? null;
+  const idTypeLabels = useMemo(() => codeLabels(mdsIdTypes), [mdsIdTypes]);
   const idTypeOptions = useMemo(() => {
     const allowed = useCase?.allowed_subject_id_types ?? [];
     const takes = useCase?.subject_id_types ?? [];
-    const s = new Set(allowed.length ? allowed : takes.length ? takes : BASE_ID_TYPES);
-    s.add(idType);
-    return [...s];
-  }, [useCase, idType]);
+    const mds = mdsIdTypes?.values.map((v) => v.code) ?? [];
+    return [...new Set(allowed.length ? allowed : takes.length ? takes : mds.length ? mds : BASE_ID_TYPES)];
+  }, [useCase, mdsIdTypes]);
 
   useEffect(() => {
     const allowed = useCase?.allowed_subject_id_types ?? [];
@@ -62,6 +65,8 @@ export default function UseCaseRequestForm() {
   const allowedTypes = useCase?.allowed_subject_id_types ?? [];
   if (allowedTypes.length && !allowedTypes.includes(idType))
     problems.push(`Subject ID type ${idType} is not accepted for this use case.`);
+  if (mdsIdTypes && !mdsIdTypes.values.some((v) => v.code === idType))
+    problems.push(`Subject ID type ${idType} is not in Master Data list ${mdsIdTypes.list_code}.`);
   if (validFrom && validUntil && validUntil < validFrom)
     problems.push("“Valid until” must be on or after “Valid from”.");
   if (validUntil && validUntil < today()) problems.push("“Valid until” is in the past.");
@@ -156,13 +161,7 @@ export default function UseCaseRequestForm() {
             <div className="grid-2">
               <div className="field">
                 <label htmlFor="id-type">ID type</label>
-                <select id="id-type" value={idType} onChange={(e) => setIdType(e.target.value)}>
-                  {idTypeOptions.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
+                <CodeSelect id="id-type" value={idType} onChange={setIdType} options={idTypeOptions} labels={idTypeLabels} />
               </div>
               <div className="field">
                 <label htmlFor="id-value">ID number</label>

@@ -5,6 +5,7 @@ from .consent_service import ConsentService
 from .crypto_service import CryptoService
 from .evidence_service import EvidenceError, EvidenceService
 from .exchange_service import ExchangeService
+from .master_data_client import CodeList, MasterDataClient
 from .lifecycle_service import LifecycleError, LifecycleService
 from .partner_service import PartnerRef, PartnerService
 from .pm_policy_client import PmPolicy, PmPolicyClient, PolicyUnavailable, pm_partner_id
@@ -33,6 +34,8 @@ __all__ = [
     "ConsentService",
     "ConsentRecordService",
     "LifecycleService",
+    "MasterDataClient",
+    "CodeList",
     "LifecycleError",
     "EvidenceService",
     "EvidenceError",

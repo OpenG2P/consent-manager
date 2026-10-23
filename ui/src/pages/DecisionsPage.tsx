@@ -16,7 +16,7 @@ export default function DecisionsPage() {
   return (
     <div>
       <div className="spread">
-        <h1>Decisions</h1>
+        <h1>Access Log</h1>
         <select value={filter} onChange={(e) => setFilter(e.target.value as typeof filter)}>
           <option value="">All</option>
           <option value="permit">Permits</option>
@@ -25,12 +25,12 @@ export default function DecisionsPage() {
       </div>
 
       <p className="muted" style={{ marginTop: -8, marginBottom: 24 }}>
-        The append-only record of every validation decision — for operational visibility and audit.
+        Every consent check the CM made, and its result
       </p>
 
       {isLoading && <div className="loading">Loading…</div>}
-      {error && <div className="notice notice-error">Could not load decisions.</div>}
-      {data && data.length === 0 && <div className="card">No decisions recorded yet.</div>}
+      {error && <div className="notice notice-error">Could not load the access log.</div>}
+      {data && data.length === 0 && <div className="card">No consent checks recorded yet.</div>}
 
       {data && data.length > 0 && (
         <table className="data">

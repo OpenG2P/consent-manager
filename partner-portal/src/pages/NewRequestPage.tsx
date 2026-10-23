@@ -4,13 +4,13 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, compositeUrl } from "../api/client";
 import { useAccess, useRequestSettings, useUseCases } from "../api/hooks";
 import type { ConsentRequestCreate, ScopePolicy, UseCase } from "../api/types";
-import { CheckboxGroup } from "../components/FormControls";
+import { CheckboxGroup, CodeSelect, codeLabels } from "../components/FormControls";
 import { ErrorNotice } from "../components/Status";
 import UseCaseRequestForm from "../components/UseCaseRequestForm";
 import { dayEnd, dayStart, today } from "../format";
 
-// The ID types a partner user can enter in Phase 1; types allowed by the
-// partner's policies are added to these.
+// The ID types a partner user can enter when Master Data has no list of
+// subject ID types; types allowed by the partner's policies are added to these.
 const BASE_ID_TYPES = ["FAYDA_FAN", "FARMER_ID"];
 
 // Scopes per registry, prefilled from a use case: required + optional.
@@ -79,26 +79,41 @@ function ScopeRequestForm() {
   // Registries the use case needs that this partner has no policy for.
   const unbound = Object.keys(scopes).filter((c) => !byController[c] && scopes[c].length > 0);
 
+  // Master Data code lists (null: free text).
+  const mdsIdTypes = settings.data?.subject_id_types ?? null;
+  const mdsPurposes = settings.data?.purposes ?? null;
+  const idTypeLabels = useMemo(() => codeLabels(mdsIdTypes), [mdsIdTypes]);
+  const purposeLabels = useMemo(() => codeLabels(mdsPurposes), [mdsPurposes]);
+
   const idTypeOptions = useMemo(() => {
+    if (mdsIdTypes) return mdsIdTypes.values.map((v) => v.code);
     const s = new Set(BASE_ID_TYPES);
     list.forEach((b) => b.allowed_subject_id_types.forEach((t) => s.add(t)));
-    s.add(idType);
     return [...s];
-  }, [list, idType]);
+  }, [list, mdsIdTypes]);
 
+  // The purposes the chosen registries' policies allow; a policy that allows
+  // any purpose (empty list) offers the Master Data list, else free text.
+  const selectedKey = selected.join(",");
   const purposeOptions = useMemo(() => {
-    const from = selected.length ? selected.map((c) => byController[c]).filter(Boolean) : list;
+    const chosen = selectedKey ? selectedKey.split(",") : [];
+    const from = chosen.length ? chosen.map((c) => byController[c]).filter(Boolean) : list;
+    if (from.some((b) => b.allowed_purposes.length === 0))
+      return mdsPurposes ? mdsPurposes.values.map((v) => v.code) : null;
     const s = new Set<string>();
     from.forEach((b) => b.allowed_purposes.forEach((p) => s.add(p)));
-    if (purpose) s.add(purpose);
     return [...s].sort();
-  }, [selected, byController, list, purpose]);
+  }, [selectedKey, byController, list, mdsPurposes]);
 
   // ── Validation (the API checks again against the policies) ──────────
   const problems: string[] = [];
   if (!idValue.trim()) problems.push("Enter the subject's ID.");
   for (const t of requiredIds) if (!(extraIds[t] ?? "").trim()) problems.push(`Enter the subject's ${t}.`);
-  if (!purpose) problems.push("Choose a purpose.");
+  if (!purpose.trim()) problems.push("Choose a purpose.");
+  if (mdsIdTypes && !idTypeOptions.includes(idType))
+    problems.push(`Subject ID type ${idType} is not in Master Data list ${mdsIdTypes.list_code}.`);
+  if (mdsPurposes && purpose && !mdsPurposes.values.some((v) => v.code === purpose))
+    problems.push(`Purpose "${purpose}" is not in Master Data list ${mdsPurposes.list_code}.`);
   if (selected.length === 0) problems.push("Choose the data to request from at least one registry.");
   if (unbound.length)
     problems.push(`Your organisation has no policy for: ${unbound.join(", ")}. Remove those registries.`);
@@ -107,7 +122,7 @@ function ScopeRequestForm() {
     if (!b) continue;
     const bad = scopes[c].filter((s) => !b.allowed_data_scopes.includes(s));
     if (bad.length) problems.push(`${c}: you may not ask for ${bad.join(", ")} — untick them.`);
-    if (purpose && !b.allowed_purposes.includes(purpose))
+    if (purpose && b.allowed_purposes.length && !b.allowed_purposes.includes(purpose))
       problems.push(`${c}: purpose "${purpose}" is not allowed for this registry.`);
     if (b.allowed_subject_id_types.length && !b.allowed_subject_id_types.includes(idType))
       problems.push(`${c}: subject ID type ${idType} is not accepted by this registry.`);
@@ -121,7 +136,7 @@ function ScopeRequestForm() {
       const body: ConsentRequestCreate = {
         subject_id: { type: idType, value: idValue.trim() },
         subject_identifiers: requiredIds.map((t) => ({ type: t, value: (extraIds[t] ?? "").trim() })),
-        purpose: { code: purpose },
+        purpose: { code: purpose.trim() },
         grants: selected.map((c) => ({ data_controller: c, data_scopes: scopes[c] })),
       };
       if (validFrom || validUntil) {
@@ -187,13 +202,7 @@ function ScopeRequestForm() {
             <div className="grid-2">
               <div className="field">
                 <label htmlFor="id-type">ID type</label>
-                <select id="id-type" value={idType} onChange={(e) => setIdType(e.target.value)}>
-                  {idTypeOptions.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
+                <CodeSelect id="id-type" value={idType} onChange={setIdType} options={idTypeOptions} labels={idTypeLabels} />
               </div>
               <div className="field">
                 <label htmlFor="id-value">ID number</label>
@@ -230,14 +239,15 @@ function ScopeRequestForm() {
             <div className="grid-2">
               <div className="field">
                 <label htmlFor="purpose">Purpose</label>
-                <select id="purpose" value={purpose} onChange={(e) => setPurpose(e.target.value)}>
-                  <option value="">Choose…</option>
-                  {purposeOptions.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
-                  ))}
-                </select>
+                <CodeSelect
+                  id="purpose"
+                  value={purpose}
+                  onChange={setPurpose}
+                  options={purposeOptions}
+                  labels={purposeLabels}
+                  placeholder="e.g. credit-assessment"
+                  choose
+                />
               </div>
               <div className="field">
                 <label htmlFor="use-case">Use case (optional)</label>

@@ -38,6 +38,7 @@ from .services import (
     EvidenceService,
     ExchangeService,
     LifecycleService,
+    MasterDataClient,
     PartnerService,
     PmPolicyClient,
     PolicyService,
@@ -61,6 +62,7 @@ class Initializer(BaseInitializer):
         PolicyService()
         ReceiptService()
         CompositeClient()
+        MasterDataClient()
         ExchangeService()  # depends on CryptoService
         VerificationService()
         ConsentService()

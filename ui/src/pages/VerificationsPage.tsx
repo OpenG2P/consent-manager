@@ -49,7 +49,7 @@ export default function VerificationsPage() {
   return (
     <div>
       <div className="spread">
-        <h1 style={{ margin: 0 }}>Consent verifications</h1>
+        <h1 style={{ margin: 0 }}>Consent Approvals</h1>
         <select
           aria-label="Status"
           value={status}
@@ -63,14 +63,13 @@ export default function VerificationsPage() {
         </select>
       </div>
       <p className="muted" style={{ marginTop: 0, marginBottom: 24 }}>
-        Consents a partner obtained in person, with the form the subject signed. Check that the form
-        matches the subject and the request, then approve (the consent becomes active) or reject.
+        Consents collected in the partner portal, waiting for a staff check
       </p>
 
       {isLoading && <div className="loading">Loading…</div>}
       {error && (
         <div className="notice notice-error">
-          Could not load verifications. {error instanceof ApiError ? error.message : ""}
+          Could not load consent approvals. {error instanceof ApiError ? error.message : ""}
         </div>
       )}
       {data && data.items.length === 0 && (

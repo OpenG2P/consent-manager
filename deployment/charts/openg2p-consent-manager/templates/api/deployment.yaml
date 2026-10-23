@@ -54,6 +54,7 @@ spec:
             {{- with (include "consentManager.partnerPortalEnv" $ | trim) }}
             {{- . | nindent 12 }}
             {{- end }}
+            {{- include "consentManager.masterDataEnv" $ | nindent 12 }}
             {{- end }}
             # Per-audience overrides (the 4-API pattern): which controllers this
             # instance mounts, and whether Keycloak auth applies (partner=off).

@@ -180,14 +180,31 @@ class SubjectAuthConfig(BaseModel):
     id_types: List[str] = []
 
 
+class CodeOption(BaseModel):
+    code: str
+    label: str
+
+
+class CodeListOut(BaseModel):
+    """A Master Data code list: a request must use one of its codes."""
+
+    list_code: str
+    values: List[CodeOption]
+
+
 class RequestSettings(BaseModel):
     """What a new assisted request needs (for the portal's form).
     ``consent_by``: ``use_case`` at the Exchange (the request names a granted
-    use case), else ``scopes`` (it names registries and scopes)."""
+    use case), else ``scopes`` (it names registries and scopes).
+    ``purposes`` / ``subject_id_types``: the Master Data code lists; null =
+    free text (not configured, not in the country's Master Data, or Master
+    Data unreachable)."""
 
     consent_by: Literal["use_case", "scopes"] = "scopes"
     required_subject_identifiers: List[str] = []
     subject_auth: SubjectAuthConfig
+    purposes: Optional[CodeListOut] = None
+    subject_id_types: Optional[CodeListOut] = None
 
 
 class AssistedRequestResponse(BaseModel):

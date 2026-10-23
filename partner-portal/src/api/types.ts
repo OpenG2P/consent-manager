@@ -157,10 +157,19 @@ export interface SubjectAuthConfig {
   id_types: string[];
 }
 
+// A Master Data code list; a request must use one of its codes.
+export interface CodeList {
+  list_code: string;
+  values: { code: string; label: string }[];
+}
+
 export interface RequestSettings {
   consent_by: ConsentBy;
   required_subject_identifiers: string[];
   subject_auth: SubjectAuthConfig;
+  // null: free text (no list in Master Data, or Master Data unreachable).
+  purposes?: CodeList | null;
+  subject_id_types?: CodeList | null;
 }
 
 export interface SubjectAuthStart {

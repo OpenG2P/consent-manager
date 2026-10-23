@@ -173,6 +173,20 @@ questions:
   group: Sanity
   show_if: sanity.enabled=true
 
+# ------------------------- Partner Management -----------------------
+- variable: global.partnerPolicyCache.ttlSeconds
+  description: "How long a partner's policy read from Partner Management is reused before it is read again. An approved policy change applies within this time."
+  type: int
+  default: 60
+  label: Partner Policy Cache TTL (seconds)
+  group: Partner Management
+- variable: global.partnerPolicyCache.hardTtlSeconds
+  description: "How long the last known policy is still used while Partner Management is unreachable; after that, requests are refused. During an outage a revoked partner can still get through for up to this long. Shorter stops a revoked partner sooner, but refuses everyone sooner when Partner Management is down."
+  type: int
+  default: 21600
+  label: Partner Policy Hard TTL (seconds)
+  group: Partner Management
+
 # ------------------------------ Exchange ----------------------------
 # Off by default: a standalone install leaves this alone. Pick a role and the
 # defaults are the reference values (Agri Stack's); fill the fields only to differ.
@@ -202,6 +216,13 @@ questions:
   type: int
   default: 300
   label: Token Lifetime (seconds)
+  group: Exchange
+  show_if: global.agriStackExchange.role=exchange
+- variable: partnerApi.exposeReceiptStatus
+  description: "Route GET /consent/v1/receipts/{jti}/status on the public partner host, so departments can check a token's status here. Needed only if a department turns its Token Status Check on. Off: only the public keys (/.well-known/jwks.json) are reachable from outside; /validate is always in-cluster only."
+  type: boolean
+  default: false
+  label: Expose Token Status Endpoint
   group: Exchange
   show_if: global.agriStackExchange.role=exchange
 - variable: global.agriStackExchange.compositeApiUrl
@@ -240,7 +261,7 @@ questions:
   group: Exchange
   show_if: global.agriStackExchange.role=department
 - variable: global.agriStackExchange.receiptStatusCheck
-  description: "Check each token's status (revoked/expired) at the Exchange CM. Off by default: tokens are short-lived and single-use; a revocation applies at the Exchange immediately and to issued tokens within their lifetime. Turning it on adds a runtime call to the Exchange CM for every token."
+  description: "Check each token's status (revoked/expired) at the Exchange CM. Off by default: tokens are short-lived and single-use; a revocation applies at the Exchange immediately and to issued tokens within their lifetime. Turning it on adds a runtime call to the Exchange CM for every token, and the Exchange must expose its token status endpoint (Expose Token Status Endpoint on its install)."
   type: enum
   options: [never, always]
   default: never
@@ -283,6 +304,27 @@ questions:
   type: string
   default: ""
   label: Required Subject Identifiers
+  group: Partner portal
+  show_if: partnerPortal.enabled=true
+- variable: masterData.url
+  description: "Master Data Service (staff API) whose code lists give the portal's purposes and subject ID types, read with this release's consent-manager Keycloak client (service account). With a list loaded, requests naming other values are refused; if Master Data is unreachable, or the list is not in the country's Master Data, they are free text. Empty = free text."
+  type: string
+  default: http://commons-services-master-data-api
+  label: Master Data URL
+  group: Partner portal
+  show_if: partnerPortal.enabled=true
+- variable: masterData.purposeListCode
+  description: Master Data list of consent purposes offered in the portal. Empty = free text.
+  type: string
+  default: CONSENT_PURPOSE
+  label: Purposes List Code
+  group: Partner portal
+  show_if: partnerPortal.enabled=true
+- variable: masterData.subjectIdTypeListCode
+  description: Master Data list of subject ID types offered in the portal. Empty = free text.
+  type: string
+  default: SUBJECT_ID_TYPE
+  label: Subject ID Types List Code
   group: Partner portal
   show_if: partnerPortal.enabled=true
 - variable: evidence.s3.endpoint

@@ -13,6 +13,8 @@ from ..schemas.portal import (
     AssistedRequestDetail,
     AssistedRequestList,
     AssistedRequestResponse,
+    CodeListOut,
+    CodeOption,
     EvidenceResponse,
     PartnerAccessView,
     PartnerConsentList,
@@ -29,6 +31,7 @@ from ..services import (
     ConsentService,
     EvidenceError,
     LifecycleError,
+    MasterDataClient,
     SubjectAuthService,
 )
 from ..services.composite_client import consent_by_use_case
@@ -57,6 +60,7 @@ class PartnerPortalController(BaseController):
         self.consents = ConsentService.get_component()
         self.subject_auth = SubjectAuthService.get_component()
         self.records = ConsentRecordService.get_component()
+        self.master_data = MasterDataClient.get_component()
         self.router.prefix += "/consent/v1/partner-portal"
         self.router.tags += ["Partner portal"]
 
@@ -252,10 +256,18 @@ class PartnerPortalController(BaseController):
     async def request_settings(
         self, user: PartnerUser = Depends(current_partner_user)
     ) -> RequestSettings:
+        lists = {}
+        for kind in ("purposes", "subject_id_types"):
+            codes = await self.master_data.code_list(kind)
+            lists[kind] = codes and CodeListOut(
+                list_code=codes.list_code,
+                values=[CodeOption(code=c, label=label) for c, label in codes.values],
+            )
         return RequestSettings(
             consent_by="use_case" if consent_by_use_case() else "scopes",
             required_subject_identifiers=_config.subject_required_identifiers,
             subject_auth=await self.subject_auth_config(user),
+            **lists,
         )
 
     async def start_subject_auth(

@@ -15,7 +15,8 @@ global:
   # ── Hostname / routing (one per API audience) ───────────────────────────
   # staff console + admin API:
   consentManagerHostname: 'consent-manager.{{ tpl .Values.global.baseDomain $ }}'
-  # partner-facing PDP (/validate, receipts, JWKS) — verified via PM keys:
+  # partner api; only its JWKS (and optionally the token status) is routed here
+  # — see partnerApi.publicPaths:
   consentManagerPartnerHostname: 'consent-manager-partner.{{ tpl .Values.global.baseDomain $ }}'
   # beneficiary self-service (/my/*, origination) — scaffolded, disabled:
   consentManagerBeneHostname: 'consent-manager-bene.{{ tpl .Values.global.baseDomain $ }}'
@@ -502,6 +503,36 @@ evidence:
     secretKeyKey: root-password
   maxBytes: 10485760
 
+# ── Master Data code lists (partner portal) ─────────────────────────────────
+# Purposes and subject ID types offered in the partner portal's request form
+# (POST {url}/catalogue/get_list_values, with a client-credentials token of
+# global.consentManagerAuthClientId — the service account, not the user's
+# token; its secret is the keycloak-init Secret of the same name). A loaded list
+# is enforced on portal requests; a list not in the country's Master Data, an
+# empty url or list code, or Master Data unreachable = free text (accepted).
+masterData:
+  url: 'http://commons-services-master-data-api'
+  purposeListCode: CONSENT_PURPOSE
+  subjectIdTypeListCode: SUBJECT_ID_TYPE
+  cacheTtl: 300
+  timeout: 5
+
+# ── Partner api exposure ────────────────────────────────────────────────────
+# The partner api (/validate, consent status, receipts) has no login: registries
+# and the Composite call it in cluster (http://<release>-partner-api). Its
+# VirtualService uses the `internal` gateway, which is reachable from outside,
+# so it routes ONLY these paths on the partner host (under
+# /api/consent-manager-partner); every other path gets a 404 at the gateway.
+partnerApi:
+  # Path prefixes (as served by the api) routed through the VirtualService.
+  # The JWKS: departments on other clusters and partners checking a consent
+  # record fetch the CM's public keys here.
+  publicPaths:
+    - /.well-known/jwks.json
+  # Also route GET /consent/v1/receipts/{jti}/status — only needed on the
+  # Exchange when a department sets receiptStatusCheck: always.
+  exposeReceiptStatus: false
+
 # Additional API-audience deployments in THIS chart (same image, separate
 # Deployment/Service/VirtualService). Each entry is merged OVER consentManagerApi,
 # so it only needs to state its differences. This is how the one chart runs the
@@ -510,6 +541,7 @@ evidence:
 extraApis:
   # PARTNER api — the PDP. Trust = partner-signed consent object via PM keys;
   # NO Keycloak. Mints receipts + serves JWKS, so it mounts the signing key.
+  # In cluster only, except the paths in partnerApi above.
   - enabled: true
     nameOverride: partner-api
     apiAudience: partner

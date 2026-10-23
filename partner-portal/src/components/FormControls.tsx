@@ -47,3 +47,51 @@ export function CheckboxGroup({
     </fieldset>
   );
 }
+
+// A choice from a code list (e.g. Master Data purposes): a select, labelled
+// "Label (CODE)"; free text when there is no list (options null).
+export function CodeSelect({
+  id,
+  value,
+  onChange,
+  options,
+  labels = {},
+  placeholder,
+  choose = false,
+}: {
+  id: string;
+  value: string;
+  onChange: (next: string) => void;
+  options: string[] | null;
+  labels?: Record<string, string>;
+  placeholder?: string;
+  choose?: boolean;
+}) {
+  if (options === null)
+    return (
+      <input
+        id={id}
+        type="text"
+        autoComplete="off"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+      />
+    );
+  const all = value && !options.includes(value) ? [...options, value] : options;
+  return (
+    <select id={id} value={value} onChange={(e) => onChange(e.target.value)}>
+      {choose && <option value="">Choose…</option>}
+      {all.map((c) => (
+        <option key={c} value={c}>
+          {labels[c] && labels[c] !== c ? `${labels[c]} (${c})` : c}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+// {code: label} of a code list.
+export function codeLabels(list?: { values: { code: string; label: string }[] } | null) {
+  return Object.fromEntries((list?.values ?? []).map((v) => [v.code, v.label]));
+}

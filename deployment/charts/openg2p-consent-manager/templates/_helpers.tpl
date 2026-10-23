@@ -141,6 +141,35 @@ install's manifests are unchanged. Call with the root context.
 {{- end -}}
 
 {{/*
+Master Data code lists (partner portal purposes and subject ID types) for the
+STAFF api, which serves the partner portal API. Root context.
+*/}}
+{{- define "consentManager.masterDataEnv" -}}
+{{- $m := .Values.masterData | default dict -}}
+- name: CONSENT_MANAGER_MDS_URL
+  value: {{ tpl ($m.url | default "") . | quote }}
+- name: CONSENT_MANAGER_MDS_TOKEN_URL
+  value: "{{ tpl .Values.global.keycloakIssuerUrl . }}/protocol/openid-connect/token"
+- name: CONSENT_MANAGER_MDS_CLIENT_ID
+  value: {{ tpl .Values.global.consentManagerAuthClientId . | quote }}
+# Its secret: the keycloak-init Secret of the same name.
+- name: CONSENT_MANAGER_MDS_CLIENT_SECRET
+  valueFrom:
+    secretKeyRef:
+      name: {{ tpl .Values.global.consentManagerAuthClientId . | quote }}
+      key: client_secret
+      optional: true
+- name: CONSENT_MANAGER_MDS_PURPOSE_LIST_CODE
+  value: {{ $m.purposeListCode | default "" | quote }}
+- name: CONSENT_MANAGER_MDS_SUBJECT_ID_TYPE_LIST_CODE
+  value: {{ $m.subjectIdTypeListCode | default "" | quote }}
+- name: CONSENT_MANAGER_MDS_CACHE_TTL
+  value: {{ $m.cacheTtl | default 300 | quote }}
+- name: CONSENT_MANAGER_MDS_TIMEOUT
+  value: {{ $m.timeout | default 5 | quote }}
+{{- end -}}
+
+{{/*
 true when the staff api mounts the subject-auth client key (partner portal +
 national-ID login on; always on for the exchange role). Root context.
 */}}

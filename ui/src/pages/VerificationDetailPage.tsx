@@ -96,7 +96,7 @@ export default function VerificationDetailPage() {
     <div>
       <div className="spread">
         <div>
-          <h1 style={{ margin: 0 }}>Consent verification</h1>
+          <h1 style={{ margin: 0 }}>Consent approval</h1>
           <div className="muted">
             <code className="mono">{r.id}</code>
           </div>

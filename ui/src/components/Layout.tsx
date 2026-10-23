@@ -30,12 +30,12 @@ export default function Layout() {
           {/* Approvers act on assisted-consent verifications; admins may read. */}
           {(approver || admin) && (
             <NavLink to="/verifications" className={navClass}>
-              <BadgeCheck size={18} /> Consent verifications
+              <BadgeCheck size={18} /> Consent Approvals
             </NavLink>
           )}
           {admin && (
             <NavLink to="/decisions" className={navClass}>
-              <FileSearch size={18} /> Decisions
+              <FileSearch size={18} /> Access Log
             </NavLink>
           )}
           <NavLink to="/my/consents" className={navClass}>

@@ -28,6 +28,7 @@ from ..utils.canonical import iso_duration_to_timedelta
 from .composite_client import EXCHANGE_NEEDS_USE_CASE, consent_by_use_case
 from .evidence_service import EvidenceError, EvidenceService
 from .lifecycle_service import LifecycleError, LifecycleService
+from .master_data_client import MasterDataClient
 from .partner_service import PartnerService
 from .pm_policy_client import PolicyUnavailable, common_policy_fields, policy_fields
 from .receipt_service import ReceiptService
@@ -59,6 +60,7 @@ class AssistedConsentService(BaseService):
         self.receipts = ReceiptService.get_component()
         self.evidence = EvidenceService.get_component()
         self.subject_auth = SubjectAuthService.get_component()
+        self.master_data = MasterDataClient.get_component()
 
     # ── Partner: what it may ask for ─────────────────────────────────────────
 
@@ -148,6 +150,7 @@ class AssistedConsentService(BaseService):
             raise LifecycleError(400, EXCHANGE_NEEDS_USE_CASE)
         if not by_use_case and data.grants is None:
             raise LifecycleError(422, "'grants' is required")
+        await self._check_code_lists(data, by_use_case)
         resolved = (
             None if by_use_case else await self.lifecycle.resolve_grants(audience, data.grants)
         )
@@ -199,6 +202,22 @@ class AssistedConsentService(BaseService):
             await session.commit()
             await session.refresh(req)
             return req
+
+    async def _check_code_lists(self, data, by_use_case: bool) -> None:
+        """The subject ID type and (not by use case: the use case's purpose is
+        the Composite's) the purpose must be in their Master Data lists when
+        those are loaded; otherwise anything is accepted."""
+        checks = [("subject_id_types", "subject ID type", data.subject_id.type)]
+        if not by_use_case and data.purpose is not None:
+            checks.append(("purposes", "purpose", data.purpose.code))
+        for kind, what, value in checks:
+            codes = await self.master_data.code_list(kind)
+            if codes is not None and value not in codes.codes:
+                raise LifecycleError(
+                    400,
+                    f"unknown {what} '{value}': not in Master Data list {codes.list_code} "
+                    f"(one of {', '.join(sorted(codes.codes))})",
+                )
 
     def _check_scope_policies(self, resolved, data, valid_from, valid_until, now) -> None:
         """Each grant's scope policy: purpose, subject id type, maximum validity."""

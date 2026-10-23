@@ -268,3 +268,22 @@ class Settings(BaseSettings):
     # How long a started login may take (the state's lifetime).
     subject_auth_session_ttl_seconds: int = 300
     subject_auth_http_timeout_seconds: float = 10.0
+
+    # ── Master Data code lists (partner portal choices) ─────────────────────
+    # Purposes and subject ID types offered in the partner portal's request
+    # form, read from the Master Data Service's staff API
+    # (POST {mds_url}/catalogue/get_list_values) with a client-credentials
+    # token of the CM's own Keycloak client (never the user's token), as
+    # Partner Management does. A loaded list is enforced on portal requests;
+    # a list absent from the country's Master Data (G2P-CAT-404), an empty
+    # mds_url or list code, or Master Data unreachable = free text (accepted).
+    mds_url: str = ""  # e.g. http://commons-services-master-data-api
+    mds_token_url: str = ""  # Keycloak token endpoint; empty = no token sent
+    mds_client_id: str = ""
+    mds_client_secret: str = ""
+    mds_purpose_list_code: str = "CONSENT_PURPOSE"
+    mds_subject_id_type_list_code: str = "SUBJECT_ID_TYPE"
+    # How long a list read is reused; a failed read is retried after
+    # min(this, 30) seconds.
+    mds_cache_ttl: int = 300
+    mds_timeout: float = 5.0
