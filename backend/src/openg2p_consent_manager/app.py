@@ -13,6 +13,7 @@ from .controllers import (
     DecisionsController,
     LifecycleController,
     PartnerPortalController,
+    StaffConsentController,
     SubjectController,
     VerificationController,
     WellKnownController,
@@ -92,6 +93,8 @@ class Initializer(BaseInitializer):
             # Consent scenario 1: staff verify assisted consents; partner users
             # (partner realm, own token check) use the partner portal API.
             ConsentVerificationController().post_init()
+            # Staff view of a consent, and revocation on the subject's request.
+            StaffConsentController().post_init()
             PartnerPortalController().post_init()
         if beneficiary:
             # BENEFICIARY api — Keycloak beneficiary realm. /my/* + origination.
@@ -216,6 +219,13 @@ class Initializer(BaseInitializer):
                     text(
                         "ALTER TABLE consent_artefacts ADD COLUMN IF NOT EXISTS "
                         "consent_request_id VARCHAR"
+                    )
+                )
+                # Who revoked a consent on the subject's request (staff API).
+                await conn.execute(
+                    text(
+                        "ALTER TABLE revocation_records ADD COLUMN IF NOT EXISTS "
+                        "revoked_by VARCHAR(255)"
                     )
                 )
                 # Exchange role: the use case a consent was made for.

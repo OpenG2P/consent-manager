@@ -117,6 +117,13 @@ export default function VerificationsPage() {
                   <td className="muted">{dateTime(r.submitted_at)}</td>
                   <td>
                     <span className={`badge badge-${r.status}`}>{r.status.replace(/_/g, " ")}</span>
+                    {r.consent_id && (
+                      <div style={{ fontSize: 12 }}>
+                        <Link to={`/consents/${r.consent_id}`} onClick={(e) => e.stopPropagation()}>
+                          View consent
+                        </Link>
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))}

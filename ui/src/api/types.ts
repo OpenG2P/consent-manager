@@ -20,10 +20,10 @@ export interface DecisionLog {
   created_at: string;
 }
 
-// ── Subject rights (transparency dashboard) ──────────────────────────────
-// Backed by ArtefactResponse. `purpose` is a structured object; the registry
-// decides its shape, so we render defensively.
-export type ConsentStatus = "active" | "revoked" | "expired" | "pending";
+// ── Consents (staff view) ────────────────────────────────────────────────
+// `purpose` is a structured object; the registry decides its shape, so we
+// render defensively.
+export type ConsentStatus = "active" | "revoked" | "expired";
 
 export interface Purpose {
   code?: string;
@@ -32,48 +32,10 @@ export interface Purpose {
   [k: string]: unknown;
 }
 
-export interface Artefact {
-  id: string;
-  consent_id?: string | null;
-  subject_id_type: string;
-  subject_id_value: string;
-  partner_id: string;
-  controller_id?: string | null;
-  purpose: Purpose;
-  effective_data_scopes: string[];
-  grants?: ArtefactGrant[] | null;
-  // The PM policy the consent was made under (all grants' when they share one).
-  policy_version?: number | null;
-  policy_id?: string | null;
-  policy_ref?: string | null;
-  status: ConsentStatus;
-  source: string;
-  valid_from: string;
-  valid_until: string;
-  created_at: string;
-  revoked_at?: string | null;
-}
-
 // One grant per data controller (registry) in a consent.
 export interface Grant {
   data_controller: string;
   data_scopes: string[];
-}
-
-export interface ArtefactGrant extends Grant {
-  effective_data_scopes: string[];
-  granted_scopes?: string[];
-  policy_version?: number | null;
-  policy_id?: string | null;
-  policy_ref?: string | null;
-}
-
-export interface Paginated<T> {
-  items: T[];
-  total: number;
-  page: number;
-  size: number;
-  pages: number;
 }
 
 export interface RevokeResponse {
@@ -82,21 +44,39 @@ export interface RevokeResponse {
   revoked_at: string;
 }
 
-// ── Consent-request (originate / redirect flow) ──────────────────────────
-export interface ConsentRequest {
-  id: string;
-  subject_id_type: string;
-  subject_id_value: string;
+// GET /consent/v1/consents/{id} (staff api).
+export interface StaffConsent {
+  consent_id: string;
+  status: ConsentStatus;
   partner_id: string;
-  controller_id?: string | null;
+  source: string;
+  subject_id: { type: string; value: string };
+  subject_identifiers?: { type: string; value: string }[];
   purpose: Purpose;
-  requested_scopes: string[];
-  // Present when the request spans several controllers (one grant each).
-  grants?: Grant[] | null;
-  status: string; // created | authenticated | approved | denied | expired
-  valid_from?: string | null;
-  valid_until?: string | null;
+  grants: {
+    data_controller?: string | null;
+    data_scopes: string[];
+    effective_data_scopes: string[];
+    policy_version?: number | null;
+    policy_id?: string | null;
+    policy_ref?: string | null;
+  }[];
+  valid_from: string;
+  valid_until: string;
+  assurance?: Record<string, unknown> | null;
+  use_case?: string | null;
+  // The assisted request it came from: its evidence downloads from there.
+  consent_request_id?: string | null;
   created_at: string;
+  revoked_at?: string | null;
+  receipt_id?: string | null;
+  evidence: VerificationEvidence[];
+  revocations: {
+    originated_by: string;
+    reason?: string | null;
+    revoked_by?: string | null;
+    created_at: string;
+  }[];
 }
 
 // ── Consent verifications (assisted consent, staff check of the signed form) ──

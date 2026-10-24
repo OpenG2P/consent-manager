@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { BadgeCheck, ExternalLink, FileSearch, Handshake, LogOut, ShieldCheck } from "lucide-react";
+import { BadgeCheck, ExternalLink, FileSearch, Handshake, LogOut } from "lucide-react";
 import { currentUser, getConfig, isAdmin, isApprover, isDevMode, logout } from "../auth";
 import "./Layout.css";
 
@@ -8,9 +8,9 @@ import "./Layout.css";
 // the user at the bottom.
 const navClass = ({ isActive }: { isActive: boolean }) => `nav-item${isActive ? " active" : ""}`;
 
-// Landing page per role: staff who act on (or read) verifications start there.
+// Landing page: Consent Approvals (approvers act there; admins read).
 export function homePath(): string {
-  return isAdmin() || isApprover() ? "/verifications" : "/my/consents";
+  return "/verifications";
 }
 
 export default function Layout() {
@@ -38,9 +38,6 @@ export default function Layout() {
               <FileSearch size={18} /> Access Log
             </NavLink>
           )}
-          <NavLink to="/my/consents" className={navClass}>
-            <ShieldCheck size={18} /> My Consents
-          </NavLink>
           {admin && pmUrl && (
             <a
               href={pmUrl}

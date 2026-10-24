@@ -115,7 +115,10 @@ export default function VerificationDetailPage() {
           {r.consent_id && (
             <>
               {" "}
-              · consent <code className="mono">{r.consent_id}</code>
+              · consent{" "}
+              <Link to={`/consents/${r.consent_id}`}>
+                <code className="mono">{r.consent_id}</code>
+              </Link>
             </>
           )}
           {r.verification_note && <> · {r.verification_note}</>}

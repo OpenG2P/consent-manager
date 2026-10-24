@@ -2,7 +2,7 @@ import logging
 
 from openg2p_fastapi_common.service import BaseService
 
-from ..config import Settings
+from ..config import DEFAULT_WITHDRAWAL_METHOD, Settings
 from ..models import ConsentArtefact, ConsentReceipt
 from ..utils.canonical import canonical_bytes, sha256_hex
 from .crypto_service import CryptoService
@@ -61,6 +61,19 @@ class ReceiptService(BaseService):
             ]
         return [{"id": artefact.controller_id}]
 
+    @staticmethod
+    def withdrawal(consent_id: str) -> dict:
+        """How the subject withdraws (receipt_withdrawal_method), plus the
+        beneficiary api's subject endpoint when it is deployed."""
+        method = _config.receipt_withdrawal_method.strip() or DEFAULT_WITHDRAWAL_METHOD
+        doc = {"method": method.replace("{consent_id}", consent_id)}
+        base = _config.receipt_withdrawal_subject_api_url.strip().rstrip("/")
+        if base:
+            doc["additional_methods"] = [
+                f"POST {base}/consent/v1/my/consents/{consent_id}/revoke"
+            ]
+        return doc
+
     def build_receipt(self, artefact: ConsentArtefact) -> ConsentReceipt:
         artefact_hash = sha256_hex(canonical_bytes(self.artefact_document(artefact)))
         signature_value = self.crypto.sign(artefact_hash.encode("utf-8"))
@@ -90,9 +103,7 @@ class ReceiptService(BaseService):
             "data_categories": artefact.effective_data_scopes,
             # The partner the consent was given to (its audience).
             "third_parties": [artefact.partner_id],
-            "withdrawal": {
-                "method": f"POST /consent/v1/consents/{artefact.id}/revoke"
-            },
+            "withdrawal": self.withdrawal(artefact.id),
             "consent_artefact": {"@id": artefact.id, "hash": artefact_hash},
             "signature": {
                 "algorithm": self.crypto.algorithm,

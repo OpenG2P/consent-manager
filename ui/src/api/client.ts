@@ -1,16 +1,12 @@
 // Thin typed fetch wrapper over the Consent Manager REST API.
-// Every path is rooted at /consent/v1 (the backend router prefix). Admin calls
-// carry the Keycloak bearer token; the subject/consent-request flow reuses the
-// authenticated subject's token.
+// Every path is rooted at /consent/v1 (the backend router prefix) on the STAFF
+// api; every call carries the staff user's Keycloak bearer token.
 import { getConfig, getToken, refreshToken } from "../auth";
 import type {
-  Artefact,
-  ConsentRequest,
   DecisionLog,
-  Grant,
-  Paginated,
   OffsetPage,
   RevokeResponse,
+  StaffConsent,
   VerificationRequest,
 } from "./types";
 
@@ -82,43 +78,14 @@ export const api = {
     return request<DecisionLog[]>(`${V1}/decisions?${q.toString()}`);
   },
 
-  // ── Subject rights (transparency dashboard) ────────────────────────
-  myConsents: (status?: string) =>
-    request<Paginated<Artefact>>(
-      `${V1}/my/consents${status ? `?status=${encodeURIComponent(status)}` : ""}`
-    ).then((p) => p.items),
-  myConsent: (id: string) => request<Artefact>(`${V1}/my/consents/${id}`),
-  revokeMyConsent: (id: string) =>
-    request<RevokeResponse>(`${V1}/my/consents/${id}/revoke`, {
+  // ── Consents (staff view; revoke on the subject's request) ─────────
+  getConsent: (id: string) => request<StaffConsent>(`${V1}/consents/${encodeURIComponent(id)}`),
+  getConsentReceipt: (id: string) =>
+    request<Record<string, unknown>>(`${V1}/consents/${encodeURIComponent(id)}/receipt`),
+  revokeConsent: (id: string, reason: string) =>
+    request<RevokeResponse>(`${V1}/consents/${encodeURIComponent(id)}/revocations`, {
       method: "POST",
-      body: JSON.stringify({ originated_by: "subject" }),
-    }),
-
-  // ── Consent request (originate / redirect flow) ────────────────────
-  getConsentRequest: (id: string) => request<ConsentRequest>(`${V1}/consent-requests/${id}`),
-  // The subject authenticates by presenting their IdP id_token, then approves
-  // with the scopes they agree to share.
-  authenticateConsentRequest: (id: string, idToken: string) =>
-    request<{ token_validated: boolean }>(`${V1}/consent-requests/${id}/authenticate`, {
-      method: "POST",
-      body: JSON.stringify({ id_token: idToken }),
-    }),
-  approveConsentRequest: (id: string, grantedScopes: string[]) =>
-    request<Artefact>(`${V1}/consent-requests/${id}/approve`, {
-      method: "POST",
-      body: JSON.stringify({ granted_scopes: grantedScopes }),
-    }),
-  // For a request with grants: approve each controller's scopes; a controller
-  // left out is declined.
-  approveConsentRequestGrants: (id: string, grants: Grant[]) =>
-    request<Artefact>(`${V1}/consent-requests/${id}/approve`, {
-      method: "POST",
-      body: JSON.stringify({ grants }),
-    }),
-  denyConsentRequest: (id: string, reason?: string) =>
-    request<ConsentRequest>(`${V1}/consent-requests/${id}/deny`, {
-      method: "POST",
-      body: JSON.stringify({ reason: reason ?? null }),
+      body: JSON.stringify({ reason }),
     }),
 
   // ── Consent verifications (assisted consent; approver acts, admin reads) ──

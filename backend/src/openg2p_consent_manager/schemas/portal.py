@@ -295,6 +295,38 @@ class PartnerConsentResponse(BaseModel):
     revoked_at: Optional[datetime] = None
 
 
+class RevocationView(BaseModel):
+    model_config = {"from_attributes": True}
+
+    originated_by: str
+    reason: Optional[str] = None
+    revoked_by: Optional[str] = None
+    created_at: datetime
+
+
+class StaffConsentResponse(PartnerConsentResponse):
+    """A consent as staff see it (staff API): the partner's view plus the
+    partner, how it was made, its receipt, the evidence of the request it came
+    from (downloadable from that verification) and its revocations."""
+
+    partner_id: str
+    source: str
+    receipt_id: Optional[str] = None
+    evidence: List[EvidenceResponse] = []
+    revocations: List[RevocationView] = []
+
+
+class StaffRevokeRequest(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=2000)
+
+    @field_validator("reason")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("a reason is required")
+        return value.strip()
+
+
 class PartnerConsentList(BaseModel):
     total: int
     items: List[PartnerConsentResponse]

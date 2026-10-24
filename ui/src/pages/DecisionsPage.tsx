@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import { PolicyRef } from "../components/PolicyRef";
 
@@ -41,6 +42,7 @@ export default function DecisionsPage() {
               <th>Reason</th>
               <th>Partner</th>
               <th>Controller</th>
+              <th>Consent</th>
               <th>Policy</th>
             </tr>
           </thead>
@@ -60,6 +62,15 @@ export default function DecisionsPage() {
                 </td>
                 <td className="muted">
                   {d.data_controller ? <code className="mono">{d.data_controller}</code> : "—"}
+                </td>
+                <td className="muted">
+                  {d.consent_id ? (
+                    <Link to={`/consents/${d.consent_id}`} title={d.consent_id}>
+                      <code className="mono">{d.consent_id.slice(0, 8)}…</code>
+                    </Link>
+                  ) : (
+                    "—"
+                  )}
                 </td>
                 <td className="muted">
                   <PolicyRef

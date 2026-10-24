@@ -29,6 +29,13 @@ questions:
   label: Image Tag
   group: General
 
+- variable: global.consentReceiptWithdrawalMethod
+  description: "How a person withdraws a consent, printed on every consent receipt. Name your organisation's contact or URL; {consent_id} is replaced by the consent's ID. Staff revoke consents on the person's request in the console."
+  type: string
+  default: "Ask the organisation operating this Consent Manager to revoke it (consent ID {consent_id})."
+  label: Consent Withdrawal Method (on receipts)
+  group: General
+
 # ---------------------------- Database ------------------------------
 - variable: global.postgresqlHost
   description: PostgreSQL host for the Consent Manager database

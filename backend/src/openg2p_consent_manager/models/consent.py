@@ -260,3 +260,6 @@ class RevocationRecord(BaseORMModelWithId):
     consent_id: Mapped[str] = mapped_column(String, index=True)
     originated_by: Mapped[str] = mapped_column(String(20))  # subject | controller | partner
     reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # The staff user who revoked it on the subject's request (staff API);
+    # NULL when the caller revoked it itself.
+    revoked_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)

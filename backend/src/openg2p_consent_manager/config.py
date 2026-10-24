@@ -17,6 +17,12 @@ class TrustedReceiptIssuer(BaseModel):
     status_url: str = ""
 
 
+DEFAULT_WITHDRAWAL_METHOD = (
+    "Ask the organisation operating this Consent Manager to revoke it "
+    "(consent ID {consent_id})."
+)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="consent_manager_", env_file=".env", extra="allow"
@@ -151,6 +157,15 @@ class Settings(BaseSettings):
 
     # Role required to verify assisted consents (approve / reject their evidence).
     auth_approver_role: str = "CONSENT_MANAGER_APPROVER"
+
+    # Consent receipt `withdrawal.method`: how the subject withdraws. Free text
+    # (an operator may name a contact or URL); {consent_id} is replaced by the
+    # consent's ID. Staff revoke on the subject's request (staff API).
+    # Empty → this default.
+    receipt_withdrawal_method: str = DEFAULT_WITHDRAWAL_METHOD
+    # Base URL of the beneficiary api, when it is deployed: its subject
+    # endpoint is then listed as an additional withdrawal method. Empty → none.
+    receipt_withdrawal_subject_api_url: str = ""
 
     # ── Agri Stack exchange (G2P-5719) — all off by default ─────────────────
     # Consent tokens (receipt_* settings): short-lived JWSs, one per registry

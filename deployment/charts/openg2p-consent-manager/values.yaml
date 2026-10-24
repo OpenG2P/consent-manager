@@ -89,6 +89,13 @@ global:
   # change it on every key rotation so old/new public keys coexist in the JWKS.
   consentSigningKid: cm-2025-01
 
+  # ── Consent receipt: how the subject withdraws (`withdrawal.method`) ──────
+  # Free text; {consent_id} is replaced by the consent's ID. Name a contact or
+  # URL of the operating organisation. Staff revoke on the subject's request
+  # (console → consent → Revoke). Empty = the built-in default text. When the
+  # beneficiary api (extraApis) is enabled, its subject endpoint is listed too.
+  consentReceiptWithdrawalMethod: 'Ask the organisation operating this Consent Manager to revoke it (consent ID {consent_id}).'
+
   # ── Agri Stack exchange (OFF by default) ────────────────────────────────
   # Consent tokens (short-lived, one per registry and query; called receipts
   # in the settings and API) between Consent Managers. Leave everything empty for a

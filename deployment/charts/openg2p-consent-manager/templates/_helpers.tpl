@@ -179,6 +179,21 @@ national-ID login on; always on for the exchange role). Root context.
 {{- if and $p.enabled (or ($p.subjectAuth | default dict).enabled $exchange) }}true{{ end -}}
 {{- end -}}
 
+{{/*
+Consent receipt withdrawal (root context): the method text, and the
+beneficiary api's base URL when that extra api is enabled.
+*/}}
+{{- define "consentManager.receiptWithdrawalEnv" -}}
+- name: CONSENT_MANAGER_RECEIPT_WITHDRAWAL_METHOD
+  value: {{ .Values.global.consentReceiptWithdrawalMethod | default "" | quote }}
+{{- range .Values.extraApis }}
+{{- if and .enabled (eq (toString .apiAudience) "beneficiary") }}
+- name: CONSENT_MANAGER_RECEIPT_WITHDRAWAL_SUBJECT_API_URL
+  value: {{ printf "https://%s%s" (tpl (toString .hostname) $) (.openapiRootPath | default "") | quote }}
+{{- end }}
+{{- end }}
+{{- end -}}
+
 {{- define "consentManagerApi.envVars" -}}
 {{- range $key, $value := .Values.envVars }}
 - name: {{ $key }}
