@@ -230,26 +230,17 @@ keycloak-init:
 # only when partnerPortal.enabled (Chart.yaml condition). Set `enabled: false`
 # here to skip it while the portal is on (realm managed by hand).
 #
-# keycloak-init (0.0.0-develop.60) creates the realm, the public client and
-# its client roles PARTNER_OPERATOR and PARTNER_ADMIN (the CM accepts either,
-# realm or client role). It CANNOT declare user-profile attributes, add custom
-# protocol mappers, enforce PKCE or set user attributes: deployment/scripts/
-# setup-partner-realm.sh does these (and creates users), or do them once in the
-# Keycloak admin console (realm `partner`) after the first install:
-#   1. (client roles: created by keycloak-init.)
-#   2. Realm settings → User profile → Create attribute `partner_id`
-#      (who can view/edit: admin only). Keycloak 24+ drops undeclared attributes.
-#   3. Clients → consent-partner-portal → Client scopes →
-#      consent-partner-portal-dedicated → Add mapper → By configuration →
-#      User Attribute: name `partner_id`, user attribute `partner_id`, token
-#      claim name `partner_id`, JSON type String, add to access token ON
-#      (ID token / userinfo ON too).
-#   4. Clients → consent-partner-portal → Advanced → PKCE method S256
-#      (optional: the portal always sends PKCE; this makes it mandatory).
-#   5. Users → Add user per partner employee: set attribute `partner_id` (the
-#      partner's ID in Partner Management, e.g. bank-a), assign the client role
-#      PARTNER_OPERATOR or PARTNER_ADMIN of consent-partner-portal, set a password. For partnerPortal.testUsers use the
-#      passwords in the <release>-partner-test-users Secret.
+# keycloak-init creates the realm, its user-profile attribute `partner_id`
+# (Keycloak 24+ drops undeclared attributes), the public client with PKCE S256
+# required, its client roles PARTNER_OPERATOR and PARTNER_ADMIN (the CM accepts
+# either, realm or client role) and the mapper putting `partner_id` into its
+# tokens. Partner users are not created here: per partner employee, in the
+# Keycloak admin console (realm `partner`) → Users → Add user, set the attribute
+# `partner_id` (the partner's ID in Partner Management, e.g. bank-a), assign the
+# client role PARTNER_OPERATOR or PARTNER_ADMIN of consent-partner-portal and set
+# a password; or deployment/scripts/setup-partner-realm.sh --user. For
+# partnerPortal.testUsers use the passwords in the <release>-partner-test-users
+# Secret.
 partner-keycloak-init:
   keycloak:
     url: 'http://commons-keycloak:80'
@@ -266,6 +257,16 @@ partner-keycloak-init:
       themes:
         loginTheme: partner-portal
         adminTheme: partner-portal
+      # The partner a portal user works for, read into the token by the mapper below.
+      userProfileAttributes:
+        - name: partner_id
+          displayName: Partner ID
+          permissions:
+            view: [admin, user]
+            edit: [admin]
+          validations:
+            length: {max: 255}
+          multivalued: false
       clients:
         # PUBLIC browser client for the partner portal SPA (standard flow; the
         # SPA uses PKCE). Redirects back to the portal host only.
@@ -282,6 +283,19 @@ partner-keycloak-init:
           clientRoles:
             - PARTNER_OPERATOR
             - PARTNER_ADMIN
+          # The SPA always sends PKCE; this makes it mandatory.
+          attributes:
+            pkce.code.challenge.method: S256
+          protocolMappers:
+            - name: partner_id
+              protocolMapper: oidc-usermodel-attribute-mapper
+              config:
+                user.attribute: partner_id
+                claim.name: partner_id
+                jsonType.label: String
+                access.token.claim: true
+                id.token.claim: true
+                userinfo.token.claim: true
 
 # Admin console SPA (React → nginx), served on the SAME host as the staff API
 # (a single VirtualService routes /consent/ → staff API, / → this UI). Runtime

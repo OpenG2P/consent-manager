@@ -2,16 +2,17 @@
 #
 # setup-partner-realm.sh
 # ----------------------
-# One-time (idempotent) Keycloak setup for the Consent Manager's partner portal: the
-# parts the chart's keycloak-init cannot do. Run after installing the CM with
-# partnerPortal.enabled (keycloak-init creates the "partner" realm, the
-# "consent-partner-portal" client and its client roles PARTNER_OPERATOR and
-# PARTNER_ADMIN; if the realm is missing this script creates it).
+# Creates partner portal users (--user) in Keycloak. The chart's keycloak-init already
+# sets up the "partner" realm when the CM is installed with partnerPortal.enabled: the
+# "consent-partner-portal" client, its client roles PARTNER_OPERATOR and PARTNER_ADMIN,
+# the user-profile attribute partner_id and the mapper putting it into tokens. Steps 1-3
+# only fill in what older installs (keycloak-init before user-profile attributes and
+# mappers) lack; they find everything in place otherwise. Idempotent.
 #
-#   1. the client roles, if keycloak-init has not created them (older installs)
+#   1. the client roles, if missing
 #   2. the user-profile attribute partner_id (Keycloak 24+ rejects undeclared attributes)
 #   3. a protocol mapper putting partner_id into the portal client's tokens
-#   4. optionally, partner users (--user): attribute partner_id, the client role, and a
+#   4. partner users (--user): attribute partner_id, the client role, and a
 #      generated password kept in a Kubernetes Secret "partner-user-<username>"
 #
 # Runs Keycloak's admin CLI (kcadm.sh) inside the Keycloak pod; the admin password is
