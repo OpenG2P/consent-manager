@@ -429,23 +429,18 @@ class AssistedConsentService(BaseService):
 
     async def approve(
         self, request_id: str, verified_by: str, note: Optional[str],
-        identifiers_checked: bool = False,
     ) -> tuple[ConsentRequest, ConsentArtefact]:
         """Verify the evidence and create the consent: every requested grant,
         narrowed to the partner's policy as it is now (a grant left with no
-        scope is dropped). A request with other subject identifiers (e.g. the
-        Farmer ID) needs the approver to confirm them in the registry."""
+        scope is dropped). Other subject identifiers (e.g. the Farmer ID) are
+        carried as entered, not checked here: a registry returns only records
+        of the consent's subject, so a wrong one finds no data."""
         async with async_session()() as session:
             req = await session.get(ConsentRequest, request_id, with_for_update=True)
             if not self._visible(req, None):
                 raise LifecycleError(404, "not_found")
             if req.status != RequestStatus.pending_verification.value:
                 raise LifecycleError(409, f"request is '{req.status}'")
-            if req.subject_identifiers and not identifiers_checked:
-                types = ", ".join(i["type"] for i in req.subject_identifiers)
-                raise LifecycleError(
-                    422, f"confirm the subject's {types} in the registry before approving"
-                )
 
             grants, fetch_type, max_validity = [], None, None
             # A request made for a use case (exchange role) is narrowed to the
@@ -512,13 +507,6 @@ class AssistedConsentService(BaseService):
                 "verified_at": now.isoformat(),
                 "subject_authenticated": auth is not None,
             }
-            if req.subject_identifiers:
-                # Checked by the approver in the registry (the source of truth).
-                assurance["subject_identifiers_checked"] = {
-                    "identifiers": [i["type"] for i in req.subject_identifiers],
-                    "checked_by": verified_by,
-                    "checked_at": now.isoformat(),
-                }
             if auth is not None:
                 assurance["subject_authentication"] = {
                     "provider": auth.auth_provider,

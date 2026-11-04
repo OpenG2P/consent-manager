@@ -100,10 +100,10 @@ export const api = {
     request<VerificationRequest>(`${V1}/verifications/${encodeURIComponent(id)}`),
   getVerificationEvidence: (id: string, evidenceId: string) =>
     requestBlob(`${V1}/verifications/${encodeURIComponent(id)}/evidence/${encodeURIComponent(evidenceId)}`),
-  approveVerification: (id: string, note?: string, identifiersChecked = false) =>
+  approveVerification: (id: string, note?: string) =>
     request<VerificationRequest>(`${V1}/verifications/${encodeURIComponent(id)}/approve`, {
       method: "POST",
-      body: JSON.stringify({ ...(note ? { note } : {}), identifiers_checked: identifiersChecked }),
+      body: JSON.stringify(note ? { note } : {}),
     }),
   rejectVerification: (id: string, note: string) =>
     request<VerificationRequest>(`${V1}/verifications/${encodeURIComponent(id)}/reject`, {

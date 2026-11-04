@@ -252,9 +252,6 @@ class VerificationRequestList(BaseModel):
 
 class ApproveVerification(BaseModel):
     note: Optional[str] = Field(None, max_length=2000)
-    # The approver confirms the request's other subject identifiers (e.g. the
-    # Farmer ID) against the registry. Required when the request carries any.
-    identifiers_checked: bool = False
 
 
 class RejectVerification(BaseModel):
