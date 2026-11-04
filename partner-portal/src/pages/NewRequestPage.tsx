@@ -162,9 +162,9 @@ function ScopeRequestForm() {
   return (
     <div>
       <div className="spread">
-        <h1 style={{ margin: 0 }}>New consent request</h1>
-        <Link to="/requests" className="btn-secondary">
-          Back to requests
+        <h1 style={{ margin: 0 }}>New consent</h1>
+        <Link to="/consents" className="btn-secondary">
+          Back to consents
         </Link>
       </div>
       <p className="muted page-intro">
@@ -356,7 +356,7 @@ function ScopeRequestForm() {
           )}
 
           <div className="actions">
-            <Link to="/requests" className="btn-secondary">
+            <Link to="/consents" className="btn-secondary">
               Cancel
             </Link>
             <button type="submit" className="btn-primary" disabled={create.isPending}>

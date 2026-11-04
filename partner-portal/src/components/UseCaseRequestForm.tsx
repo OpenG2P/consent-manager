@@ -102,9 +102,9 @@ export default function UseCaseRequestForm() {
   return (
     <div>
       <div className="spread">
-        <h1 style={{ margin: 0 }}>New consent request</h1>
-        <Link to="/requests" className="btn-secondary">
-          Back to requests
+        <h1 style={{ margin: 0 }}>New consent</h1>
+        <Link to="/consents" className="btn-secondary">
+          Back to consents
         </Link>
       </div>
       <p className="muted page-intro">
@@ -118,7 +118,7 @@ export default function UseCaseRequestForm() {
       {access.data && useCases.length === 0 && (
         <div className="card">
           Your organisation is granted no use case that can be asked for now, so it cannot request
-          consent yet. See “What we can ask for”.
+          consent yet. See “Use cases”.
         </div>
       )}
 
@@ -234,7 +234,7 @@ export default function UseCaseRequestForm() {
           )}
 
           <div className="actions">
-            <Link to="/requests" className="btn-secondary">
+            <Link to="/consents" className="btn-secondary">
               Cancel
             </Link>
             <button type="submit" className="btn-primary" disabled={create.isPending}>

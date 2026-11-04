@@ -3,16 +3,16 @@
 Web app for **partner users** (employees of a partner such as a bank) to obtain a subject's consent
 in person (consent scenario 1, "assisted") and use it:
 
-- **Requests** — raise a consent request for a subject (ID, purpose, data per registry, validity,
-  optional use case), upload the consent form the subject signed, submit it for verification by
-  Consent Manager staff, cancel; follow each request's progress.
-- **Consents** — the consents the partner obtained: data granted per registry, validity, how the
-  subject consented (assurance), and the signed receipt (download as JSON).
-- **What we can ask for** (`/access`) — the partner's active data-share policies per registry
-  (read-only); at the Exchange, the use cases granted to the partner, with their purpose and data
-  per registry. There a new request names one of those use cases instead of registries and data.
-- **Use cases** — when a use-case composite is configured: its published use cases and the consent
-  each needs; "New request from this use case" prefills the request form.
+- **Consents** (home) — **New consent** raises a consent request for a subject (at the Exchange:
+  one of the partner's use cases; elsewhere: purpose and data per registry), with the subject's
+  national-ID login and the signed consent form, submitted for verification by Consent Manager
+  staff. Requests not yet decided are listed first ("In progress"), then the partner's consents:
+  data granted per registry, validity, assurance, the signed receipt and the consent record.
+- **Use cases** (`/use-cases`) — read-only: at the Exchange, the use cases approved for the partner,
+  with their purpose and data per registry; elsewhere titled **Data access**, the partner's active
+  data-share policies per registry.
+- **History** (`/history`) — every request the partner raised and what became of it (approved with
+  its consent, rejected with the reason, cancelled).
 
 It is a front end over the Consent Manager partner-portal API (`/consent/v1/partner-portal/*`) and,
 optionally, the composite's public `GET /composite/v1/use-cases`. Same stack and look as the CM
@@ -46,7 +46,7 @@ environment; in Kubernetes mount it from a ConfigMap over `/usr/share/nginx/html
 | Key | Meaning |
 | --- | --- |
 | `apiBaseUrl` | Consent Manager API origin. Empty: same origin as the portal (Istio routes `/consent/` to the API). |
-| `compositeUrl` | Optional use-case composite origin. Empty: the "Use cases" page is hidden. Called from the browser, so the composite must allow the portal's origin (CORS). |
+| `compositeUrl` | Optional use-case composite origin, read for a request prefilled from a use case outside the Exchange. Called from the browser, so the composite must allow the portal's origin (CORS). |
 | `keycloak.url` | Keycloak base URL. Empty: **dev mode** — no sign-in; an unsigned token with `partner_id` `dev-partner` is sent (accepted only by a backend without partner-realm verification). |
 | `keycloak.realm` | `partner` |
 | `keycloak.clientId` | `consent-partner-portal` |

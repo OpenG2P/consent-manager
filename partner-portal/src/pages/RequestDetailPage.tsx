@@ -58,7 +58,7 @@ export default function RequestDetailPage() {
   if (error instanceof ApiError && error.status === 404)
     return (
       <div className="card">
-        Request not found. <Link to="/requests">Back to requests</Link>
+        Request not found. <Link to="/consents">Back to consents</Link>
       </div>
     );
   if (error || !r) return <ErrorNotice error={error} what="the request" />;
@@ -82,8 +82,8 @@ export default function RequestDetailPage() {
         </div>
         <div className="row">
           <StatusBadge status={r.status} />
-          <Link to="/requests" className="btn-secondary">
-            Back to requests
+          <Link to="/consents" className="btn-secondary">
+            Back to consents
           </Link>
         </div>
       </div>
